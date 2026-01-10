@@ -14,6 +14,11 @@ export interface WaypointPair {
 
 export interface Obstacle extends Bounds {
   center: Point
+
+  networkId?: string
+
+  // Computed prior to the solver running
+  outerSegments?: [Point, Point][]
 }
 
 export interface CurvyTraceProblem {

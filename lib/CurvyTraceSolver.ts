@@ -3,12 +3,18 @@ import type { CurvyTraceProblem, OutputTrace } from "./types"
 import type { GraphicsObject } from "graphics-debug"
 import { getBoundsCenter } from "./geometry"
 import { getColorForNetworkId } from "./visualization-utils"
+import { getObstacleOuterSegments } from "./geometry/getObstacleOuterSegments"
 
 export class CurvyTraceSolver extends BaseSolver {
   outputTraces: OutputTrace[] = []
 
   constructor(public problem: CurvyTraceProblem) {
     super()
+
+    // Mutate the obstacles to compute the outer segments
+    for (const obstacle of this.problem.obstacles) {
+      obstacle.outerSegments = getObstacleOuterSegments(obstacle)
+    }
   }
 
   override getConstructorParams() {
