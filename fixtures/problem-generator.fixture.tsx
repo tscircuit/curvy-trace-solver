@@ -1,26 +1,19 @@
 import { useState, useMemo } from "react"
-import { InteractiveGraphics } from "graphics-debug/react"
+import { GenericSolverDebugger } from "@tscircuit/solver-utils/react"
 import { generateRandomProblem } from "../lib/problem-generator"
-import { visualizeCurvyTraceProblem } from "../lib/visualization-utils"
+import { CurvyTraceSolver } from "../lib/CurvyTraceSolver"
+import type { CurvyTraceProblem } from "../lib/types"
 
 export default () => {
   const [randomSeed, setRandomSeed] = useState(1)
   const [numWaypointPairs, setNumWaypointPairs] = useState(5)
 
-  const graphics = useMemo(() => {
-    try {
-      const problem = generateRandomProblem({
-        randomSeed,
-        numWaypointPairs,
-        numObstacles: 0,
-      })
-      return visualizeCurvyTraceProblem(problem)
-    } catch (e) {
-      return {
-        coordinateSystem: "cartesian" as const,
-        texts: [{ text: `Error: ${(e as Error).message}`, x: 50, y: 50 }],
-      }
-    }
+  const problem = useMemo(() => {
+    return generateRandomProblem({
+      randomSeed,
+      numWaypointPairs,
+      numObstacles: 0,
+    })
   }, [randomSeed, numWaypointPairs])
 
   return (
@@ -47,7 +40,10 @@ export default () => {
           />
         </label>
       </div>
-      <InteractiveGraphics graphics={graphics} />
+      <GenericSolverDebugger
+        key={`${randomSeed}-${numWaypointPairs}`}
+        createSolver={() => new CurvyTraceSolver(problem as CurvyTraceProblem)}
+      />
     </div>
   )
 }
