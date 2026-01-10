@@ -10,6 +10,9 @@
     "build": "tsup ./lib/index.ts --format esm --dts",
     "build:site": "cosmos-export"
   },
+  "files": [
+    "dist"
+  ],
   "devDependencies": {
     "@biomejs/biome": "^2.3.11",
     "@tscircuit/hypergraph": "^0.0.11",
