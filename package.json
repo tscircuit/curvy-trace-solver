@@ -1,9 +1,10 @@
 {
-  "name": "curvy-trace-solver",
+  "name": "@tscircuit/curvy-trace-solver",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "start": "cosmos",
+    "build": "tsup ./lib/index.ts --format esm --dts",
     "build:site": "cosmos-export"
   },
   "devDependencies": {
@@ -16,6 +17,7 @@
     "graphics-debug": "^0.0.76",
     "react-cosmos": "^7.1.0",
     "react-cosmos-plugin-vite": "^7.1.0",
+    "tsup": "^8.5.1",
     "vite": "^7.3.1"
   },
   "peerDependencies": {
