@@ -233,13 +233,14 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeTotalCost(): number {
-    const { preferredSpacing } = this.problem
+    const { preferredSpacing, obstacles } = this.problem
     let cost = 0
 
     for (let i = 0; i < this.traces.length; i++) {
       const trace = this.traces[i]
       const points = this.sampledTraces.get(i)!
 
+      // Cost against other traces
       for (let j = i + 1; j < this.traces.length; j++) {
         const other = this.traces[j]
         if (trace.networkId && other.networkId && trace.networkId === other.networkId) continue
@@ -258,17 +259,38 @@ export class CurvyTraceSolver extends BaseSolver {
           }
         }
       }
+
+      // Cost against obstacles
+      for (const obstacle of obstacles) {
+        // Skip if same network
+        if (trace.networkId && obstacle.networkId && trace.networkId === obstacle.networkId) continue
+
+        if (obstacle.outerSegments) {
+          for (const obsSeg of obstacle.outerSegments) {
+            for (let a = 0; a < points.length - 1; a++) {
+              const dist = segmentToSegmentDistance(points[a], points[a + 1], obsSeg[0], obsSeg[1])
+              if (dist < preferredSpacing) {
+                cost += (preferredSpacing - dist) ** 2
+              }
+              if (dist < 1e-9) {
+                cost += 20 * preferredSpacing ** 2
+              }
+            }
+          }
+        }
+      }
     }
 
     return cost
   }
 
   private computeCostForTrace(traceIdx: number): number {
-    const { preferredSpacing } = this.problem
+    const { preferredSpacing, obstacles } = this.problem
     const trace = this.traces[traceIdx]
     const points = this.sampledTraces.get(traceIdx)!
     let cost = 0
 
+    // Cost against other traces
     for (let j = 0; j < this.traces.length; j++) {
       if (j === traceIdx) continue
       const other = this.traces[j]
@@ -284,6 +306,26 @@ export class CurvyTraceSolver extends BaseSolver {
           }
           if (dist < 1e-9) {
             cost += 20 * preferredSpacing ** 2
+          }
+        }
+      }
+    }
+
+    // Cost against obstacles
+    for (const obstacle of obstacles) {
+      // Skip if same network
+      if (trace.networkId && obstacle.networkId && trace.networkId === obstacle.networkId) continue
+
+      if (obstacle.outerSegments) {
+        for (const obsSeg of obstacle.outerSegments) {
+          for (let a = 0; a < points.length - 1; a++) {
+            const dist = segmentToSegmentDistance(points[a], points[a + 1], obsSeg[0], obsSeg[1])
+            if (dist < preferredSpacing) {
+              cost += (preferredSpacing - dist) ** 2
+            }
+            if (dist < 1e-9) {
+              cost += 20 * preferredSpacing ** 2
+            }
           }
         }
       }

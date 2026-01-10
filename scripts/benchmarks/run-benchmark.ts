@@ -23,7 +23,7 @@ function runBenchmark() {
     const problem = generateRandomProblem({
       randomSeed: i,
       numWaypointPairs,
-      numObstacles: 0,
+      numObstacles: 2,
       minSpacing: 5,
     })
 
