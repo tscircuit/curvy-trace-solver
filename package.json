@@ -3,7 +3,8 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "start": "cosmos"
+    "start": "cosmos",
+    "build:site": "cosmos-export"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.11",
