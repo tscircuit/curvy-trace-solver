@@ -35,6 +35,7 @@ export class CurvyTraceSolver extends BaseSolver {
         networkId: waypointPair.networkId,
       })
     }
+    this.solved = true
     // ------------- END REMOVE THIS -------------
   }
 
