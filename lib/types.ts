@@ -22,3 +22,9 @@ export interface CurvyTraceProblem {
   obstacles: Obstacle[]
   preferredSpacing: number
 }
+
+export interface OutputTrace {
+  waypointPair: WaypointPair
+  points: Point[]
+  networkId?: string
+}
