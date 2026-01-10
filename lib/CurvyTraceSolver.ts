@@ -31,11 +31,15 @@ export class CurvyTraceSolver extends BaseSolver {
       title: "Curvy Trace Solver",
     } as Required<GraphicsObject>
 
-    graphics.rects.push({
-      center: getBoundsCenter(this.problem.bounds),
-      width: this.problem.bounds.maxX - this.problem.bounds.minX,
-      height: this.problem.bounds.maxY - this.problem.bounds.minY,
-      stroke: "rgba(0, 0, 0, 0.1)",
+    graphics.lines.push({
+      points: [
+        { x: this.problem.bounds.minX, y: this.problem.bounds.minY },
+        { x: this.problem.bounds.maxX, y: this.problem.bounds.minY },
+        { x: this.problem.bounds.maxX, y: this.problem.bounds.maxY },
+        { x: this.problem.bounds.minX, y: this.problem.bounds.maxY },
+        { x: this.problem.bounds.minX, y: this.problem.bounds.minY },
+      ],
+      strokeColor: "rgba(0, 0, 0, 0.1)",
     })
 
     for (const waypointPair of this.problem.waypointPairs) {
