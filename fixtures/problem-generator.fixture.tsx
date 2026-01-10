@@ -13,6 +13,7 @@ export default () => {
       randomSeed,
       numWaypointPairs,
       numObstacles: 0,
+      minSpacing: 5,
     })
   }, [randomSeed, numWaypointPairs])
 

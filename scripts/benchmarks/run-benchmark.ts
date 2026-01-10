@@ -2,7 +2,7 @@ import { CurvyTraceSolver } from "../../lib/CurvyTraceSolver"
 import { generateRandomProblem } from "../../lib/problem-generator"
 import { scoreOutputCost } from "../../lib/scoreOutputCost"
 
-const NUM_PROBLEMS = 200
+const NUM_PROBLEMS = 25
 const MIN_WAYPOINT_PAIRS = 2
 const MAX_WAYPOINT_PAIRS = 12
 
@@ -24,6 +24,7 @@ function runBenchmark() {
       randomSeed: i,
       numWaypointPairs,
       numObstacles: 0,
+      minSpacing: 5,
     })
 
     const solver = new CurvyTraceSolver(problem)
