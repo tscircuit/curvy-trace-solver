@@ -44,10 +44,14 @@ function getPerimeterPoint(t: number, bounds: Bounds): Point {
 
 // Inline bezier sampling for performance - returns points directly into provided array
 function sampleCubicBezierInline(
-  p0x: number, p0y: number,
-  p1x: number, p1y: number,
-  p2x: number, p2y: number,
-  p3x: number, p3y: number,
+  p0x: number,
+  p0y: number,
+  p1x: number,
+  p1y: number,
+  p2x: number,
+  p2y: number,
+  p3x: number,
+  p3y: number,
   points: Float64Array,
   numSamples: number,
 ): void {
@@ -60,13 +64,18 @@ function sampleCubicBezierInline(
     const t3 = t2 * t
     const idx = i * 2
     points[idx] = mt3 * p0x + 3 * mt2 * t * p1x + 3 * mt * t2 * p2x + t3 * p3x
-    points[idx + 1] = mt3 * p0y + 3 * mt2 * t * p1y + 3 * mt * t2 * p2y + t3 * p3y
+    points[idx + 1] =
+      mt3 * p0y + 3 * mt2 * t * p1y + 3 * mt * t2 * p2y + t3 * p3y
   }
 }
 
 // Sample a cubic bezier curve into Point array
 function sampleCubicBezier(
-  p0: Point, p1: Point, p2: Point, p3: Point, numSamples: number,
+  p0: Point,
+  p1: Point,
+  p2: Point,
+  p3: Point,
+  numSamples: number,
 ): Point[] {
   const points: Point[] = []
   for (let i = 0; i <= numSamples; i++) {
@@ -85,7 +94,14 @@ function sampleCubicBezier(
 }
 
 // Point to segment distance squared
-function ptSegDistSq(px: number, py: number, sx: number, sy: number, ex: number, ey: number): number {
+function ptSegDistSq(
+  px: number,
+  py: number,
+  sx: number,
+  sy: number,
+  ex: number,
+  ey: number,
+): number {
   const dx = ex - sx
   const dy = ey - sy
   const lenSq = dx * dx + dy * dy
@@ -104,8 +120,14 @@ function ptSegDistSq(px: number, py: number, sx: number, sy: number, ex: number,
 
 // Inlined segment-to-segment distance squared for hot path
 function segmentDistSq(
-  a1x: number, a1y: number, a2x: number, a2y: number,
-  b1x: number, b1y: number, b2x: number, b2y: number,
+  a1x: number,
+  a1y: number,
+  a2x: number,
+  a2y: number,
+  b1x: number,
+  b1y: number,
+  b2x: number,
+  b2y: number,
 ): number {
   // Check for intersection first
   const d1 = (b2x - b1x) * (a1y - b1y) - (b2y - b1y) * (a1x - b1x)
@@ -113,8 +135,10 @@ function segmentDistSq(
   const d3 = (a2x - a1x) * (b1y - a1y) - (a2y - a1y) * (b1x - a1x)
   const d4 = (a2x - a1x) * (b2y - a1y) - (a2y - a1y) * (b2x - a1x)
 
-  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
-      ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) {
+  if (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  ) {
     return 0
   }
 
@@ -128,24 +152,40 @@ function segmentDistSq(
 
 // Check if chord A contains chord B
 function chordContains(
-  aT1: number, aT2: number, bT1: number, bT2: number, perimeter: number,
+  aT1: number,
+  aT2: number,
+  bT1: number,
+  bT2: number,
+  perimeter: number,
 ): boolean {
   const normalize = (t: number) => ((t % perimeter) + perimeter) % perimeter
-  const a1 = normalize(aT1), a2 = normalize(aT2)
-  const b1 = normalize(bT1), b2 = normalize(bT2)
+  const a1 = normalize(aT1),
+    a2 = normalize(aT2)
+  const b1 = normalize(bT1),
+    b2 = normalize(bT2)
   const [aMin, aMax] = a1 < a2 ? [a1, a2] : [a2, a1]
   return b1 > aMin && b1 < aMax && b2 > aMin && b2 < aMax
 }
 
 function getBoundsCenter(bounds: Bounds): Point {
-  return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+  return {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+  }
 }
 
 // Compute bounding box for a sampled trace
-function computeTraceBounds(points: Float64Array, numPoints: number): { minX: number, maxX: number, minY: number, maxY: number } {
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+function computeTraceBounds(
+  points: Float64Array,
+  numPoints: number,
+): { minX: number; maxX: number; minY: number; maxY: number } {
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity
   for (let i = 0; i < numPoints; i++) {
-    const x = points[i * 2], y = points[i * 2 + 1]
+    const x = points[i * 2],
+      y = points[i * 2 + 1]
     if (x < minX) minX = x
     if (x > maxX) maxX = x
     if (y < minY) minY = y
@@ -154,8 +194,8 @@ function computeTraceBounds(points: Float64Array, numPoints: number): { minX: nu
   return { minX, maxX, minY, maxY }
 }
 
-const OPT_SAMPLES = 10  // Samples during optimization
-const OUTPUT_SAMPLES = 20  // Samples for final output
+const OPT_SAMPLES = 5 // Samples during optimization
+const OUTPUT_SAMPLES = 20 // Samples for final output
 
 export class CurvyTraceSolver extends BaseSolver {
   outputTraces: OutputTrace[] = []
@@ -165,7 +205,12 @@ export class CurvyTraceSolver extends BaseSolver {
 
   // Typed arrays for faster sampling
   private sampledPoints: Float64Array[] = []
-  private traceBounds: { minX: number, maxX: number, minY: number, maxY: number }[] = []
+  private traceBounds: {
+    minX: number
+    maxX: number
+    minY: number
+    maxY: number
+  }[] = []
 
   // Pre-computed obstacle segments as flat arrays
   private obstacleSegments: Float64Array = new Float64Array(0)
@@ -234,7 +279,10 @@ export class CurvyTraceSolver extends BaseSolver {
     for (const trace of tracesWithT) {
       let depth = 0
       for (const other of tracesWithT) {
-        if (trace.idx !== other.idx && chordContains(other.t1, other.t2, trace.t1, trace.t2, perimeter)) {
+        if (
+          trace.idx !== other.idx &&
+          chordContains(other.t1, other.t2, trace.t1, trace.t2, perimeter)
+        ) {
           depth++
         }
       }
@@ -263,8 +311,14 @@ export class CurvyTraceSolver extends BaseSolver {
         y: pair.start.y + (pair.end.y - pair.start.y) * 0.67,
       }
 
-      const midPoint = { x: (pair.start.x + pair.end.x) / 2, y: (pair.start.y + pair.end.y) / 2 }
-      const distToCenter = Math.hypot(midPoint.x - center.x, midPoint.y - center.y)
+      const midPoint = {
+        x: (pair.start.x + pair.end.x) / 2,
+        y: (pair.start.y + pair.end.y) / 2,
+      }
+      const distToCenter = Math.hypot(
+        midPoint.x - center.x,
+        midPoint.y - center.y,
+      )
       const maxDist = Math.hypot(W / 2, H / 2)
       const spatialDepth = 1 - distToCenter / maxDist
 
@@ -291,8 +345,15 @@ export class CurvyTraceSolver extends BaseSolver {
     })
 
     // Initialize typed arrays for sampling
-    this.sampledPoints = this.traces.map(() => new Float64Array((OPT_SAMPLES + 1) * 2))
-    this.traceBounds = this.traces.map(() => ({ minX: 0, maxX: 0, minY: 0, maxY: 0 }))
+    this.sampledPoints = this.traces.map(
+      () => new Float64Array((OPT_SAMPLES + 1) * 2),
+    )
+    this.traceBounds = this.traces.map(() => ({
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+    }))
 
     this.updateSampledTraces()
     this.updateCollisionPairs()
@@ -302,28 +363,42 @@ export class CurvyTraceSolver extends BaseSolver {
     for (let i = 0; i < this.traces.length; i++) {
       const trace = this.traces[i]
       sampleCubicBezierInline(
-        trace.waypointPair.start.x, trace.waypointPair.start.y,
-        trace.ctrl1.x, trace.ctrl1.y,
-        trace.ctrl2.x, trace.ctrl2.y,
-        trace.waypointPair.end.x, trace.waypointPair.end.y,
+        trace.waypointPair.start.x,
+        trace.waypointPair.start.y,
+        trace.ctrl1.x,
+        trace.ctrl1.y,
+        trace.ctrl2.x,
+        trace.ctrl2.y,
+        trace.waypointPair.end.x,
+        trace.waypointPair.end.y,
         this.sampledPoints[i],
         OPT_SAMPLES,
       )
-      this.traceBounds[i] = computeTraceBounds(this.sampledPoints[i], OPT_SAMPLES + 1)
+      this.traceBounds[i] = computeTraceBounds(
+        this.sampledPoints[i],
+        OPT_SAMPLES + 1,
+      )
     }
   }
 
   private updateSingleTraceSample(i: number) {
     const trace = this.traces[i]
     sampleCubicBezierInline(
-      trace.waypointPair.start.x, trace.waypointPair.start.y,
-      trace.ctrl1.x, trace.ctrl1.y,
-      trace.ctrl2.x, trace.ctrl2.y,
-      trace.waypointPair.end.x, trace.waypointPair.end.y,
+      trace.waypointPair.start.x,
+      trace.waypointPair.start.y,
+      trace.ctrl1.x,
+      trace.ctrl1.y,
+      trace.ctrl2.x,
+      trace.ctrl2.y,
+      trace.waypointPair.end.x,
+      trace.waypointPair.end.y,
       this.sampledPoints[i],
       OPT_SAMPLES,
     )
-    this.traceBounds[i] = computeTraceBounds(this.sampledPoints[i], OPT_SAMPLES + 1)
+    this.traceBounds[i] = computeTraceBounds(
+      this.sampledPoints[i],
+      OPT_SAMPLES + 1,
+    )
   }
 
   // Determine which trace pairs could possibly collide based on bounding boxes
@@ -333,13 +408,20 @@ export class CurvyTraceSolver extends BaseSolver {
 
     for (let i = 0; i < this.traces.length; i++) {
       for (let j = i + 1; j < this.traces.length; j++) {
-        const ti = this.traces[i], tj = this.traces[j]
-        if (ti.networkId && tj.networkId && ti.networkId === tj.networkId) continue
+        const ti = this.traces[i],
+          tj = this.traces[j]
+        if (ti.networkId && tj.networkId && ti.networkId === tj.networkId)
+          continue
 
-        const bi = this.traceBounds[i], bj = this.traceBounds[j]
+        const bi = this.traceBounds[i],
+          bj = this.traceBounds[j]
         // Check if bounding boxes (expanded by preferredSpacing) overlap
-        if (bi.maxX + preferredSpacing >= bj.minX && bj.maxX + preferredSpacing >= bi.minX &&
-            bi.maxY + preferredSpacing >= bj.minY && bj.maxY + preferredSpacing >= bi.minY) {
+        if (
+          bi.maxX + preferredSpacing >= bj.minX &&
+          bj.maxX + preferredSpacing >= bi.minX &&
+          bi.maxY + preferredSpacing >= bj.minY &&
+          bj.maxY + preferredSpacing >= bi.minY
+        ) {
           this.collisionPairs.push([i, j])
         }
       }
@@ -353,15 +435,20 @@ export class CurvyTraceSolver extends BaseSolver {
 
     // Cost between traces using collision pairs
     for (const [i, j] of this.collisionPairs) {
-      const pi = this.sampledPoints[i], pj = this.sampledPoints[j]
+      const pi = this.sampledPoints[i],
+        pj = this.sampledPoints[j]
 
       for (let a = 0; a < OPT_SAMPLES; a++) {
-        const a1x = pi[a * 2], a1y = pi[a * 2 + 1]
-        const a2x = pi[(a + 1) * 2], a2y = pi[(a + 1) * 2 + 1]
+        const a1x = pi[a * 2],
+          a1y = pi[a * 2 + 1]
+        const a2x = pi[(a + 1) * 2],
+          a2y = pi[(a + 1) * 2 + 1]
 
         for (let b = 0; b < OPT_SAMPLES; b++) {
-          const b1x = pj[b * 2], b1y = pj[b * 2 + 1]
-          const b2x = pj[(b + 1) * 2], b2y = pj[(b + 1) * 2 + 1]
+          const b1x = pj[b * 2],
+            b1y = pj[b * 2 + 1]
+          const b2x = pj[(b + 1) * 2],
+            b2y = pj[(b + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < spacingSq) {
@@ -380,8 +467,12 @@ export class CurvyTraceSolver extends BaseSolver {
       const bi = this.traceBounds[i]
 
       for (let obsIdx = 0; obsIdx < this.numObstacleSegments; obsIdx++) {
-        if (trace.networkId && this.obstacleNetworkIds[obsIdx] &&
-            trace.networkId === this.obstacleNetworkIds[obsIdx]) continue
+        if (
+          trace.networkId &&
+          this.obstacleNetworkIds[obsIdx] &&
+          trace.networkId === this.obstacleNetworkIds[obsIdx]
+        )
+          continue
 
         const obsBase = obsIdx * 4
         const ox1 = this.obstacleSegments[obsBase]
@@ -390,14 +481,23 @@ export class CurvyTraceSolver extends BaseSolver {
         const oy2 = this.obstacleSegments[obsBase + 3]
 
         // Quick bounds check
-        const obsMinX = Math.min(ox1, ox2), obsMaxX = Math.max(ox1, ox2)
-        const obsMinY = Math.min(oy1, oy2), obsMaxY = Math.max(oy1, oy2)
-        if (bi.maxX + preferredSpacing < obsMinX || obsMaxX + preferredSpacing < bi.minX ||
-            bi.maxY + preferredSpacing < obsMinY || obsMaxY + preferredSpacing < bi.minY) continue
+        const obsMinX = Math.min(ox1, ox2),
+          obsMaxX = Math.max(ox1, ox2)
+        const obsMinY = Math.min(oy1, oy2),
+          obsMaxY = Math.max(oy1, oy2)
+        if (
+          bi.maxX + preferredSpacing < obsMinX ||
+          obsMaxX + preferredSpacing < bi.minX ||
+          bi.maxY + preferredSpacing < obsMinY ||
+          obsMaxY + preferredSpacing < bi.minY
+        )
+          continue
 
         for (let a = 0; a < OPT_SAMPLES; a++) {
-          const a1x = pi[a * 2], a1y = pi[a * 2 + 1]
-          const a2x = pi[(a + 1) * 2], a2y = pi[(a + 1) * 2 + 1]
+          const a1x = pi[a * 2],
+            a1y = pi[a * 2 + 1]
+          const a2x = pi[(a + 1) * 2],
+            a2y = pi[(a + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, ox1, oy1, ox2, oy2)
           if (distSq < spacingSq) {
@@ -424,21 +524,35 @@ export class CurvyTraceSolver extends BaseSolver {
     for (let j = 0; j < this.traces.length; j++) {
       if (j === traceIdx) continue
       const other = this.traces[j]
-      if (trace.networkId && other.networkId && trace.networkId === other.networkId) continue
+      if (
+        trace.networkId &&
+        other.networkId &&
+        trace.networkId === other.networkId
+      )
+        continue
 
       const bj = this.traceBounds[j]
       // Bounding box check
-      if (bi.maxX + preferredSpacing < bj.minX || bj.maxX + preferredSpacing < bi.minX ||
-          bi.maxY + preferredSpacing < bj.minY || bj.maxY + preferredSpacing < bi.minY) continue
+      if (
+        bi.maxX + preferredSpacing < bj.minX ||
+        bj.maxX + preferredSpacing < bi.minX ||
+        bi.maxY + preferredSpacing < bj.minY ||
+        bj.maxY + preferredSpacing < bi.minY
+      )
+        continue
 
       const pj = this.sampledPoints[j]
       for (let a = 0; a < OPT_SAMPLES; a++) {
-        const a1x = pi[a * 2], a1y = pi[a * 2 + 1]
-        const a2x = pi[(a + 1) * 2], a2y = pi[(a + 1) * 2 + 1]
+        const a1x = pi[a * 2],
+          a1y = pi[a * 2 + 1]
+        const a2x = pi[(a + 1) * 2],
+          a2y = pi[(a + 1) * 2 + 1]
 
         for (let b = 0; b < OPT_SAMPLES; b++) {
-          const b1x = pj[b * 2], b1y = pj[b * 2 + 1]
-          const b2x = pj[(b + 1) * 2], b2y = pj[(b + 1) * 2 + 1]
+          const b1x = pj[b * 2],
+            b1y = pj[b * 2 + 1]
+          const b2x = pj[(b + 1) * 2],
+            b2y = pj[(b + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < spacingSq) {
@@ -452,8 +566,12 @@ export class CurvyTraceSolver extends BaseSolver {
 
     // Cost against obstacles
     for (let obsIdx = 0; obsIdx < this.numObstacleSegments; obsIdx++) {
-      if (trace.networkId && this.obstacleNetworkIds[obsIdx] &&
-          trace.networkId === this.obstacleNetworkIds[obsIdx]) continue
+      if (
+        trace.networkId &&
+        this.obstacleNetworkIds[obsIdx] &&
+        trace.networkId === this.obstacleNetworkIds[obsIdx]
+      )
+        continue
 
       const obsBase = obsIdx * 4
       const ox1 = this.obstacleSegments[obsBase]
@@ -461,14 +579,23 @@ export class CurvyTraceSolver extends BaseSolver {
       const ox2 = this.obstacleSegments[obsBase + 2]
       const oy2 = this.obstacleSegments[obsBase + 3]
 
-      const obsMinX = Math.min(ox1, ox2), obsMaxX = Math.max(ox1, ox2)
-      const obsMinY = Math.min(oy1, oy2), obsMaxY = Math.max(oy1, oy2)
-      if (bi.maxX + preferredSpacing < obsMinX || obsMaxX + preferredSpacing < bi.minX ||
-          bi.maxY + preferredSpacing < obsMinY || obsMaxY + preferredSpacing < bi.minY) continue
+      const obsMinX = Math.min(ox1, ox2),
+        obsMaxX = Math.max(ox1, ox2)
+      const obsMinY = Math.min(oy1, oy2),
+        obsMaxY = Math.max(oy1, oy2)
+      if (
+        bi.maxX + preferredSpacing < obsMinX ||
+        obsMaxX + preferredSpacing < bi.minX ||
+        bi.maxY + preferredSpacing < obsMinY ||
+        obsMaxY + preferredSpacing < bi.minY
+      )
+        continue
 
       for (let a = 0; a < OPT_SAMPLES; a++) {
-        const a1x = pi[a * 2], a1y = pi[a * 2 + 1]
-        const a2x = pi[(a + 1) * 2], a2y = pi[(a + 1) * 2 + 1]
+        const a1x = pi[a * 2],
+          a1y = pi[a * 2 + 1]
+        const a2x = pi[(a + 1) * 2],
+          a2y = pi[(a + 1) * 2 + 1]
 
         const distSq = segmentDistSq(a1x, a1y, a2x, a2y, ox1, oy1, ox2, oy2)
         if (distSq < spacingSq) {
@@ -597,7 +724,13 @@ export class CurvyTraceSolver extends BaseSolver {
   private buildOutputTraces() {
     this.outputTraces = this.traces.map((trace) => ({
       waypointPair: trace.waypointPair,
-      points: sampleCubicBezier(trace.waypointPair.start, trace.ctrl1, trace.ctrl2, trace.waypointPair.end, OUTPUT_SAMPLES),
+      points: sampleCubicBezier(
+        trace.waypointPair.start,
+        trace.ctrl1,
+        trace.ctrl2,
+        trace.waypointPair.end,
+        OUTPUT_SAMPLES,
+      ),
       networkId: trace.networkId,
     }))
   }
