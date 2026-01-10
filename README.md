@@ -1,5 +1,3 @@
 # @tscircuit/curvy-trace-solver
 
-Solves for "curvy" high-density trace solutions that maximize trace distance
-given trace anchor points
-
+Convert trace waypoints into curvy traces maximizing trace-to-trace and trace-to-obstacle distance
