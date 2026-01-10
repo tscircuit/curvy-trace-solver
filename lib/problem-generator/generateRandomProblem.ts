@@ -1,9 +1,96 @@
 import type { Bounds } from "@tscircuit/math-utils"
-import type { CurvyTraceProblem, WaypointPair } from "lib/types"
+import type { CurvyTraceProblem, Obstacle, WaypointPair } from "lib/types"
 import { perimeterT } from "./countChordCrossings"
 import { createRng } from "./createRng"
 import { randomBoundaryPoint } from "./randomBoundaryPoint"
 import { wouldCrossAny } from "./wouldCrossAny"
+
+type Side = "top" | "bottom" | "left" | "right"
+
+/**
+ * Check if two obstacles overlap.
+ */
+const obstaclesOverlap = (a: Obstacle, b: Obstacle): boolean => {
+  return !(
+    a.maxX <= b.minX ||
+    a.minX >= b.maxX ||
+    a.maxY <= b.minY ||
+    a.minY >= b.maxY
+  )
+}
+
+/**
+ * Generate an obstacle that is outside the bounds but touching a specific side.
+ * The obstacle takes up at least 10% of the side it's touching.
+ */
+const generateObstacleOnSide = (
+  rng: () => number,
+  bounds: Bounds,
+  side: Side,
+): Obstacle => {
+  const { minX, maxX, minY, maxY } = bounds
+  const W = maxX - minX
+  const H = maxY - minY
+
+  // Obstacle depth (how far it extends outside the bounds)
+  const minDepth = Math.min(W, H) * 0.1
+  const maxDepth = Math.min(W, H) * 0.3
+  const depth = minDepth + rng() * (maxDepth - minDepth)
+
+  let obstacleMinX: number
+  let obstacleMaxX: number
+  let obstacleMinY: number
+  let obstacleMaxY: number
+
+  if (side === "top" || side === "bottom") {
+    // Obstacle spans horizontally along top or bottom
+    const minSpan = W * 0.1 // At least 10% of the side
+    const maxSpan = W * 0.4 // Up to 40% of the side
+    const span = minSpan + rng() * (maxSpan - minSpan)
+
+    // Random position along the side (ensuring it fits within bounds)
+    const startX = minX + rng() * (W - span)
+    obstacleMinX = startX
+    obstacleMaxX = startX + span
+
+    if (side === "top") {
+      obstacleMinY = maxY
+      obstacleMaxY = maxY + depth
+    } else {
+      obstacleMinY = minY - depth
+      obstacleMaxY = minY
+    }
+  } else {
+    // Obstacle spans vertically along left or right
+    const minSpan = H * 0.1 // At least 10% of the side
+    const maxSpan = H * 0.4 // Up to 40% of the side
+    const span = minSpan + rng() * (maxSpan - minSpan)
+
+    // Random position along the side (ensuring it fits within bounds)
+    const startY = minY + rng() * (H - span)
+    obstacleMinY = startY
+    obstacleMaxY = startY + span
+
+    if (side === "right") {
+      obstacleMinX = maxX
+      obstacleMaxX = maxX + depth
+    } else {
+      obstacleMinX = minX - depth
+      obstacleMaxX = minX
+    }
+  }
+
+  return {
+    minX: obstacleMinX,
+    maxX: obstacleMaxX,
+    minY: obstacleMinY,
+    maxY: obstacleMaxY,
+    center: {
+      x: (obstacleMinX + obstacleMaxX) / 2,
+      y: (obstacleMinY + obstacleMaxY) / 2,
+    },
+  }
+}
 
 export const generateRandomProblem = (opts: {
   numWaypointPairs: number
@@ -16,7 +103,6 @@ export const generateRandomProblem = (opts: {
    */
   minSpacing?: number
 }): CurvyTraceProblem => {
-  if (opts.numObstacles > 0) throw new Error("Obstacles are not supported yet")
 
   const rng = createRng(opts.randomSeed)
 
@@ -96,10 +182,44 @@ export const generateRandomProblem = (opts: {
     waypointPairs.push({ start, end, networkId: `net${i}` })
   }
 
+  // Generate obstacles outside the bounds but touching them
+  const obstacles: Obstacle[] = []
+  const sides: Side[] = ["top", "bottom", "left", "right"]
+
+  for (let i = 0; i < opts.numObstacles; i++) {
+    let attempts = 0
+    let obstacle: Obstacle | null = null
+
+    while (attempts < MAX_ATTEMPTS) {
+      // Pick a random side for this obstacle
+      const side = sides[Math.floor(rng() * sides.length)]
+      const candidate = generateObstacleOnSide(rng, bounds, side)
+
+      // Check if it overlaps with any existing obstacle
+      const overlaps = obstacles.some((existing) =>
+        obstaclesOverlap(candidate, existing),
+      )
+
+      if (!overlaps) {
+        obstacle = candidate
+        break
+      }
+
+      attempts++
+    }
+
+    if (obstacle === null) {
+      // Could not place obstacle without overlap, skip it
+      break
+    }
+
+    obstacles.push(obstacle)
+  }
+
   return {
     bounds,
     waypointPairs,
-    obstacles: [],
+    obstacles,
     preferredSpacing: opts.preferredSpacing ?? 10,
   }
 }

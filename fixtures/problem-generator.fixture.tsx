@@ -12,7 +12,7 @@ export default () => {
     return generateRandomProblem({
       randomSeed,
       numWaypointPairs,
-      numObstacles: 0,
+      numObstacles: 3,
       minSpacing: 5,
     })
   }, [randomSeed, numWaypointPairs])
