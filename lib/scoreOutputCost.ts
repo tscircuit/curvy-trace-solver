@@ -11,6 +11,9 @@ import { sampleTraceIntoSegments } from "./sampleTraceIntoSegments"
  * other-network segments in the output and obstacles. Beyond
  * problem.preferredSpacing the cost is 0. The max segment-to-segment cost
  * is problem.preferredSpacing**2
+ *
+ * If a segment intersects any segment from a different net, an additional
+ * penalty of samplesPerTrace * preferredSpacing**2 is added.
  */
 export const scoreOutputCost = ({
   problem,
@@ -76,6 +79,10 @@ export const scoreOutputCost = ({
       if (dist < preferredSpacing) {
         totalCost += (preferredSpacing - dist) ** 2
       }
+      // Add cross-net intersection penalty
+      if (dist < 1e-9) {
+        totalCost += samplesPerTrace * preferredSpacing ** 2
+      }
     }
 
     // Check against obstacle segments (different network)
@@ -97,6 +104,10 @@ export const scoreOutputCost = ({
       )
       if (dist < preferredSpacing) {
         totalCost += (preferredSpacing - dist) ** 2
+      }
+      // Add cross-net intersection penalty
+      if (dist < 1e-9) {
+        totalCost += samplesPerTrace * preferredSpacing ** 2
       }
     }
   }
