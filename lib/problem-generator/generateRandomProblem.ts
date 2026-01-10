@@ -56,6 +56,26 @@ export const generateRandomProblem = (opts: {
 
       newChord = [t1, t2]
 
+      // Check minSpacing constraint against all existing waypoint points
+      if (opts.minSpacing !== undefined) {
+        let tooClose = false
+        for (const pair of waypointPairs) {
+          const dStart1 = Math.hypot(start.x - pair.start.x, start.y - pair.start.y)
+          const dStart2 = Math.hypot(start.x - pair.end.x, start.y - pair.end.y)
+          const dEnd1 = Math.hypot(end.x - pair.start.x, end.y - pair.start.y)
+          const dEnd2 = Math.hypot(end.x - pair.end.x, end.y - pair.end.y)
+          if (dStart1 < opts.minSpacing || dStart2 < opts.minSpacing ||
+              dEnd1 < opts.minSpacing || dEnd2 < opts.minSpacing) {
+            tooClose = true
+            break
+          }
+        }
+        if (tooClose) {
+          attempts++
+          continue
+        }
+      }
+
       // Check if this chord would cross any existing chords
       if (!wouldCrossAny(newChord, chords)) {
         break
