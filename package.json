@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "cosmos",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "build": "tsup ./lib/index.ts --format esm --dts",
     "build:site": "cosmos-export"
   },
