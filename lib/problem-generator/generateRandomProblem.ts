@@ -11,6 +11,10 @@ export const generateRandomProblem = (opts: {
   randomSeed: number
   bounds?: Bounds
   preferredSpacing?: number
+  /**
+   * Minimum spacing between a waypoint point and any other waypoint point.
+   */
+  minSpacing?: number
 }): CurvyTraceProblem => {
   if (opts.numObstacles > 0) throw new Error("Obstacles are not supported yet")
 
@@ -69,7 +73,7 @@ export const generateRandomProblem = (opts: {
     }
 
     chords.push(newChord)
-    waypointPairs.push({ start, end })
+    waypointPairs.push({ start, end, networkId: `net${i}` })
   }
 
   return {

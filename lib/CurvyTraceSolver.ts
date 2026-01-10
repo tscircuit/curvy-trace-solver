@@ -2,7 +2,7 @@ import { BaseSolver } from "@tscircuit/solver-utils"
 import type { CurvyTraceProblem, OutputTrace } from "./types"
 import type { GraphicsObject } from "graphics-debug"
 import { getBoundsCenter } from "./geometry"
-import { getColorForNetworkId } from "./visualization-utils"
+import { visualizeCurvyTraceProblem } from "./visualization-utils"
 import { getObstacleOuterSegments } from "./geometry/getObstacleOuterSegments"
 
 export class CurvyTraceSolver extends BaseSolver {
@@ -39,49 +39,6 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   override visualize(): GraphicsObject {
-    const graphics = {
-      arrows: [],
-      circles: [],
-      lines: [],
-      rects: [],
-      coordinateSystem: "cartesian",
-      points: [],
-      texts: [],
-      title: "Curvy Trace Solver",
-    } as Required<GraphicsObject>
-
-    graphics.lines.push({
-      points: [
-        { x: this.problem.bounds.minX, y: this.problem.bounds.minY },
-        { x: this.problem.bounds.maxX, y: this.problem.bounds.minY },
-        { x: this.problem.bounds.maxX, y: this.problem.bounds.maxY },
-        { x: this.problem.bounds.minX, y: this.problem.bounds.maxY },
-        { x: this.problem.bounds.minX, y: this.problem.bounds.minY },
-      ],
-      strokeColor: "rgba(0, 0, 0, 0.1)",
-    })
-
-    for (const waypointPair of this.problem.waypointPairs) {
-      graphics.points.push({
-        ...waypointPair.start,
-        label: `start ${waypointPair.networkId ?? ""}`,
-        color: getColorForNetworkId(waypointPair.networkId),
-      })
-      graphics.points.push({
-        ...waypointPair.end,
-        label: `end ${waypointPair.networkId ?? ""}`,
-        color: getColorForNetworkId(waypointPair.networkId),
-      })
-    }
-
-    // Draw the output traces
-    for (const trace of this.outputTraces) {
-      graphics.lines.push({
-        points: trace.points,
-        strokeColor: getColorForNetworkId(trace.networkId),
-      })
-    }
-
-    return graphics
+    return visualizeCurvyTraceProblem(this.problem, this.outputTraces)
   }
 }
