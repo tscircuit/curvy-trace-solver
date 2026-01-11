@@ -270,6 +270,9 @@ export class CurvyTraceSolver extends BaseSolver {
   private lastCost = Infinity
   private stagnantSteps = 0
 
+  // Relaxation: start with higher spacing and decay towards actual preferred value
+  private effectiveTraceToTraceSpacing: number = 0
+
   constructor(public problem: CurvyTraceProblem) {
     super()
     for (const obstacle of this.problem.obstacles) {
@@ -473,17 +476,51 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   // Update control points from perpendicular distances
+  // Ensures control points don't go backwards through the edge the waypoint is on
   private updateControlPointsFromDistances(i: number) {
     const trace = this.traces[i]
-    trace.ctrl1.x = trace.waypointPair.start.x + trace.d1 * trace.perpDir1.x
-    trace.ctrl1.y = trace.waypointPair.start.y + trace.d1 * trace.perpDir1.y
-    trace.ctrl2.x = trace.waypointPair.end.x + trace.d2 * trace.perpDir2.x
-    trace.ctrl2.y = trace.waypointPair.end.y + trace.d2 * trace.perpDir2.y
+    const { minX, maxX, minY, maxY } = this.problem.bounds
+    const eps = 1e-6
+
+    // Compute raw control point positions
+    let ctrl1x = trace.waypointPair.start.x + trace.d1 * trace.perpDir1.x
+    let ctrl1y = trace.waypointPair.start.y + trace.d1 * trace.perpDir1.y
+    let ctrl2x = trace.waypointPair.end.x + trace.d2 * trace.perpDir2.x
+    let ctrl2y = trace.waypointPair.end.y + trace.d2 * trace.perpDir2.y
+
+    // Clamp ctrl1 to not go backwards through start's edge
+    const start = trace.waypointPair.start
+    if (Math.abs(start.x - minX) < eps) ctrl1x = Math.max(ctrl1x, minX) // left edge
+    if (Math.abs(start.x - maxX) < eps) ctrl1x = Math.min(ctrl1x, maxX) // right edge
+    if (Math.abs(start.y - minY) < eps) ctrl1y = Math.max(ctrl1y, minY) // bottom edge
+    if (Math.abs(start.y - maxY) < eps) ctrl1y = Math.min(ctrl1y, maxY) // top edge
+
+    // Clamp ctrl2 to not go backwards through end's edge
+    const end = trace.waypointPair.end
+    if (Math.abs(end.x - minX) < eps) ctrl2x = Math.max(ctrl2x, minX) // left edge
+    if (Math.abs(end.x - maxX) < eps) ctrl2x = Math.min(ctrl2x, maxX) // right edge
+    if (Math.abs(end.y - minY) < eps) ctrl2y = Math.max(ctrl2y, minY) // bottom edge
+    if (Math.abs(end.y - maxY) < eps) ctrl2y = Math.min(ctrl2y, maxY) // top edge
+
+    // Also clamp both control points to stay within overall bounds
+    // This ensures the Bézier curve (which is within convex hull of control points)
+    // stays within bounds
+    ctrl1x = Math.max(minX, Math.min(maxX, ctrl1x))
+    ctrl1y = Math.max(minY, Math.min(maxY, ctrl1y))
+    ctrl2x = Math.max(minX, Math.min(maxX, ctrl2x))
+    ctrl2y = Math.max(minY, Math.min(maxY, ctrl2y))
+
+    trace.ctrl1.x = ctrl1x
+    trace.ctrl1.y = ctrl1y
+    trace.ctrl2.x = ctrl2x
+    trace.ctrl2.y = ctrl2y
   }
 
   // Determine which trace pairs could possibly collide based on bounding boxes
   private updateCollisionPairs() {
-    const { preferredTraceToTraceSpacing: preferredSpacing } = this.problem
+    // Use effective spacing for collision pair detection - this expands the search radius
+    // during early optimization when effective spacing is higher
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
     this.collisionPairs = []
 
     for (let i = 0; i < this.traces.length; i++) {
@@ -495,12 +532,12 @@ export class CurvyTraceSolver extends BaseSolver {
 
         const bi = this.traceBounds[i],
           bj = this.traceBounds[j]
-        // Check if bounding boxes (expanded by preferredSpacing) overlap
+        // Check if bounding boxes (expanded by effectiveSpacing) overlap
         if (
-          bi.maxX + preferredSpacing >= bj.minX &&
-          bj.maxX + preferredSpacing >= bi.minX &&
-          bi.maxY + preferredSpacing >= bj.minY &&
-          bj.maxY + preferredSpacing >= bi.minY
+          bi.maxX + effectiveSpacing >= bj.minX &&
+          bj.maxX + effectiveSpacing >= bi.minX &&
+          bi.maxY + effectiveSpacing >= bj.minY &&
+          bj.maxY + effectiveSpacing >= bi.minY
         ) {
           this.collisionPairs.push([i, j])
         }
@@ -509,9 +546,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeTotalCost(): number {
-    const { preferredTraceToTraceSpacing, preferredObstacleToTraceSpacing } =
-      this.problem
-    const traceSpacingSq = preferredTraceToTraceSpacing ** 2
+    const { preferredObstacleToTraceSpacing } = this.problem
+    // Use effective spacing (decays from high value towards preferred during optimization)
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
+    const traceSpacingSq = effectiveSpacing ** 2
     const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
     let cost = 0
 
@@ -535,7 +573,7 @@ export class CurvyTraceSolver extends BaseSolver {
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < traceSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredTraceToTraceSpacing - dist) ** 2
+            cost += (effectiveSpacing - dist) ** 2
             if (distSq < 1e-18) cost += 20 * traceSpacingSq
           }
         }
@@ -595,9 +633,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeCostForTrace(traceIdx: number): number {
-    const { preferredTraceToTraceSpacing, preferredObstacleToTraceSpacing } =
-      this.problem
-    const traceSpacingSq = preferredTraceToTraceSpacing ** 2
+    const { preferredObstacleToTraceSpacing } = this.problem
+    // Use effective spacing (decays from high value towards preferred during optimization)
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
+    const traceSpacingSq = effectiveSpacing ** 2
     const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
     const trace = this.traces[traceIdx]
     const pi = this.sampledPoints[traceIdx]
@@ -616,12 +655,12 @@ export class CurvyTraceSolver extends BaseSolver {
         continue
 
       const bj = this.traceBounds[j]
-      // Bounding box check
+      // Bounding box check using effective spacing
       if (
-        bi.maxX + preferredTraceToTraceSpacing < bj.minX ||
-        bj.maxX + preferredTraceToTraceSpacing < bi.minX ||
-        bi.maxY + preferredTraceToTraceSpacing < bj.minY ||
-        bj.maxY + preferredTraceToTraceSpacing < bi.minY
+        bi.maxX + effectiveSpacing < bj.minX ||
+        bj.maxX + effectiveSpacing < bi.minX ||
+        bi.maxY + effectiveSpacing < bj.minY ||
+        bj.maxY + effectiveSpacing < bi.minY
       )
         continue
 
@@ -641,7 +680,7 @@ export class CurvyTraceSolver extends BaseSolver {
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < traceSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredTraceToTraceSpacing - dist) ** 2
+            cost += (effectiveSpacing - dist) ** 2
             if (distSq < 1e-18) cost += 20 * traceSpacingSq
           }
         }
@@ -946,9 +985,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private optimizeStep() {
-    const { bounds, preferredTraceToTraceSpacing } = this.problem
+    const { bounds } = this.problem
     const { minX, maxX, minY, maxY } = bounds
     const minDim = Math.min(maxX - minX, maxY - minY)
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
 
     // Adaptive step size for perpendicular distances
     const progress = this.optimizationStep / this.maxOptimizationSteps
@@ -972,7 +1012,11 @@ export class CurvyTraceSolver extends BaseSolver {
 
       // For high-cost traces, use larger steps
       const costMultiplier = currentCost > 100 ? 2.0 : 1.0
-      const steps = [baseStep * costMultiplier, baseStep * 1.5 * costMultiplier, baseStep * 0.5]
+      const steps = [
+        baseStep * costMultiplier,
+        baseStep * 1.5 * costMultiplier,
+        baseStep * 0.5,
+      ]
 
       for (const step of steps) {
         // Distance deltas to try - include larger jumps for high cost traces
@@ -985,8 +1029,8 @@ export class CurvyTraceSolver extends BaseSolver {
                 -step * 2,
                 step * 3,
                 -step * 3,
-                preferredTraceToTraceSpacing * 2,
-                -preferredTraceToTraceSpacing * 2,
+                effectiveSpacing * 2,
+                -effectiveSpacing * 2,
               ]
             : [step, -step, step * 2, -step * 2]
 
@@ -1087,12 +1131,24 @@ export class CurvyTraceSolver extends BaseSolver {
 
   override _step() {
     if (this.traces.length === 0) {
+      // Initialize effective spacing to 3x preferred - will decay during optimization
+      this.effectiveTraceToTraceSpacing =
+        this.problem.preferredTraceToTraceSpacing * 3
       this.initializeTraces()
       this.lastCost = this.computeTotalCost()
       this.stagnantSteps = 0
     }
 
     if (this.optimizationStep < this.maxOptimizationSteps) {
+      // Decay effective spacing towards the actual preferred value
+      const progress = this.optimizationStep / this.maxOptimizationSteps
+      const startMultiplier = 3.0
+      const endMultiplier = 1.0
+      const currentMultiplier =
+        startMultiplier + (endMultiplier - startMultiplier) * progress
+      this.effectiveTraceToTraceSpacing =
+        this.problem.preferredTraceToTraceSpacing * currentMultiplier
+
       this.optimizeStep()
       this.optimizationStep++
 

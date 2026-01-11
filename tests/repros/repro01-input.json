@@ -118,5 +118,5 @@
     }
   ],
   "preferredTraceToTraceSpacing": 0.3,
-  "preferredObstacleToTraceSpacing": 0.15
+  "preferredObstacleToTraceSpacing": 0.3
 }
