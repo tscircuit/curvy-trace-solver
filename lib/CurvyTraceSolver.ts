@@ -308,18 +308,30 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private initializeTraces() {
-    const { bounds, waypointPairs } = this.problem
+    const { bounds, waypointPairs, preferredTraceToTraceSpacing } = this.problem
     const { minX, maxX, minY, maxY } = bounds
     const W = maxX - minX
     const H = maxY - minY
     const perimeter = 2 * W + 2 * H
     const center = getBoundsCenter(bounds)
+    const eps = 1e-6
+
+    // Helper to determine which edge a point is on
+    const getEdge = (p: Point): "top" | "bottom" | "left" | "right" | null => {
+      if (Math.abs(p.y - maxY) < eps) return "top"
+      if (Math.abs(p.y - minY) < eps) return "bottom"
+      if (Math.abs(p.x - maxX) < eps) return "right"
+      if (Math.abs(p.x - minX) < eps) return "left"
+      return null
+    }
 
     const tracesWithT = waypointPairs.map((pair, idx) => ({
       pair,
       t1: getPerimeterT(pair.start, bounds),
       t2: getPerimeterT(pair.end, bounds),
       idx,
+      startEdge: getEdge(pair.start),
+      endEdge: getEdge(pair.end),
     }))
 
     // Compute containment relationships between all traces
@@ -344,6 +356,63 @@ export class CurvyTraceSolver extends BaseSolver {
             contains[other.idx].push(trace.idx)
           }
         }
+      }
+    }
+
+    // Group traces by their start-end edge combination
+    // Traces in the same group need to be layered properly
+    const edgeGroups = new Map<string, typeof tracesWithT>()
+    for (const trace of tracesWithT) {
+      const key = `${trace.startEdge}-${trace.endEdge}`
+      if (!edgeGroups.has(key)) edgeGroups.set(key, [])
+      edgeGroups.get(key)!.push(trace)
+    }
+
+    // For each group, sort traces by their position and assign layer index
+    // Traces closer to the corner formed by their edges should have smaller depths
+    const layerIndex = new Map<number, number>()
+    const groupSizes = new Map<number, number>()
+
+    for (const [key, group] of edgeGroups) {
+      if (group.length <= 1) {
+        if (group.length === 1) {
+          layerIndex.set(group[0].idx, 0)
+          groupSizes.set(group[0].idx, 1)
+        }
+        continue
+      }
+
+      const [startEdge, endEdge] = key.split("-")
+
+      // Sort based on edge combination to create proper layering
+      // The trace closest to the corner should be innermost (smallest depth)
+      let sorted: typeof group
+
+      if (startEdge === "left" && endEdge === "top") {
+        // Sort by start.y descending (highest y = closest to top-left corner = innermost)
+        sorted = [...group].sort((a, b) => b.pair.start.y - a.pair.start.y)
+      } else if (startEdge === "left" && endEdge === "bottom") {
+        sorted = [...group].sort((a, b) => a.pair.start.y - b.pair.start.y)
+      } else if (startEdge === "right" && endEdge === "top") {
+        sorted = [...group].sort((a, b) => b.pair.start.y - a.pair.start.y)
+      } else if (startEdge === "right" && endEdge === "bottom") {
+        sorted = [...group].sort((a, b) => a.pair.start.y - b.pair.start.y)
+      } else if (startEdge === "top" && endEdge === "left") {
+        sorted = [...group].sort((a, b) => a.pair.start.x - b.pair.start.x)
+      } else if (startEdge === "top" && endEdge === "right") {
+        sorted = [...group].sort((a, b) => b.pair.start.x - a.pair.start.x)
+      } else if (startEdge === "bottom" && endEdge === "left") {
+        sorted = [...group].sort((a, b) => a.pair.start.x - b.pair.start.x)
+      } else if (startEdge === "bottom" && endEdge === "right") {
+        sorted = [...group].sort((a, b) => b.pair.start.x - a.pair.start.x)
+      } else {
+        // Same edge or diagonal - sort by perimeter position
+        sorted = [...group].sort((a, b) => a.t1 - b.t1)
+      }
+
+      for (let i = 0; i < sorted.length; i++) {
+        layerIndex.set(sorted[i].idx, i)
+        groupSizes.set(sorted[i].idx, sorted.length)
       }
     }
 
@@ -375,19 +444,32 @@ export class CurvyTraceSolver extends BaseSolver {
         midPoint.x - center.x,
         midPoint.y - center.y,
       )
-      const maxDist = Math.hypot(W / 2, H / 2)
-      const spatialDepth = 1 - distToCenter / maxDist
+      const maxDistToCenter = Math.hypot(W / 2, H / 2)
+      const spatialDepth = 1 - distToCenter / maxDistToCenter
+
+      // Get layer-based depth adjustment for traces sharing edges
+      const layer = layerIndex.get(idx) ?? 0
+      const groupSize = groupSizes.get(idx) ?? 1
+
+      // Each layer adds spacing to ensure traces don't overlap
+      // Inner traces (layer 0) get base depth, outer traces get progressively more
+      const layerSpacing = preferredTraceToTraceSpacing * 1.5
+      const layerDepthAddition = layer * layerSpacing
 
       // Initial perpendicular distances: proportional to chord length
       // Nested traces get smaller distances, traces near edges get larger distances
-      const baseFactor = 0.25 + spatialDepth * 0.15
+      const baseFactor = 0.35 + spatialDepth * 0.15
       const depthAdjustment = 1 - normalizedDepth * 0.3
-      const initialDist = chordLength * baseFactor * depthAdjustment
+      const baseInitialDist = chordLength * baseFactor * depthAdjustment
 
       // Ensure minimum distance for reasonable curve shape
-      const minDist = Math.min(W, H) * 0.05
-      const d1 = Math.max(minDist, initialDist)
-      const d2 = Math.max(minDist, initialDist)
+      // Use preferredObstacleToTraceSpacing as minimum to help avoid obstacles
+      const minDist = Math.max(
+        Math.min(W, H) * 0.05,
+        preferredTraceToTraceSpacing,
+      )
+      const d1 = Math.max(minDist, baseInitialDist + layerDepthAddition)
+      const d2 = Math.max(minDist, baseInitialDist + layerDepthAddition)
 
       // Compute control points from perpendicular directions and distances
       const ctrl1 = {
