@@ -1012,7 +1012,11 @@ export class CurvyTraceSolver extends BaseSolver {
 
       // For high-cost traces, use larger steps
       const costMultiplier = currentCost > 100 ? 2.0 : 1.0
-      const steps = [baseStep * costMultiplier, baseStep * 1.5 * costMultiplier, baseStep * 0.5]
+      const steps = [
+        baseStep * costMultiplier,
+        baseStep * 1.5 * costMultiplier,
+        baseStep * 0.5,
+      ]
 
       for (const step of steps) {
         // Distance deltas to try - include larger jumps for high cost traces
