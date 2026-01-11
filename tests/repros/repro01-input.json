@@ -1,0 +1,122 @@
+{
+  "bounds": {
+    "minX": 6.25,
+    "minY": -11.64,
+    "maxX": 9.75,
+    "maxY": -9.64
+  },
+  "waypointPairs": [
+    {
+      "start": {
+        "x": 6.25,
+        "y": -10.795
+      },
+      "end": {
+        "x": 8.595,
+        "y": -9.64
+      },
+      "networkId": "source_trace_3"
+    },
+    {
+      "start": {
+        "x": 6.25,
+        "y": -10.175
+      },
+      "end": {
+        "x": 8.285,
+        "y": -9.64
+      },
+      "networkId": "source_trace_2"
+    },
+    {
+      "start": {
+        "x": 6.25,
+        "y": -11.105
+      },
+      "end": {
+        "x": 9.215,
+        "y": -9.64
+      },
+      "networkId": "source_trace_4"
+    },
+    {
+      "start": {
+        "x": 6.25,
+        "y": -11.415000000000001
+      },
+      "end": {
+        "x": 9.525,
+        "y": -9.64
+      },
+      "networkId": "source_trace_5"
+    },
+    {
+      "start": {
+        "x": 6.25,
+        "y": -9.865
+      },
+      "end": {
+        "x": 7.975,
+        "y": -9.64
+      },
+      "networkId": "source_trace_1"
+    }
+  ],
+  "obstacles": [
+    {
+      "minX": 6.25,
+      "minY": -9.64,
+      "maxX": 7.75,
+      "maxY": -8.14,
+      "center": {
+        "x": 7,
+        "y": -8.89
+      },
+      "networkId": "source_trace_0",
+      "outerSegments": [
+        [
+          {
+            "x": 6.25,
+            "y": -9.64
+          },
+          {
+            "x": 7.75,
+            "y": -9.64
+          }
+        ],
+        [
+          {
+            "x": 7.75,
+            "y": -9.64
+          },
+          {
+            "x": 7.75,
+            "y": -8.14
+          }
+        ],
+        [
+          {
+            "x": 7.75,
+            "y": -8.14
+          },
+          {
+            "x": 6.25,
+            "y": -8.14
+          }
+        ],
+        [
+          {
+            "x": 6.25,
+            "y": -8.14
+          },
+          {
+            "x": 6.25,
+            "y": -9.64
+          }
+        ]
+      ]
+    }
+  ],
+  "preferredTraceToTraceSpacing": 0.3,
+  "preferredObstacleToTraceSpacing": 0.15
+}
