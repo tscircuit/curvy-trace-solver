@@ -270,6 +270,9 @@ export class CurvyTraceSolver extends BaseSolver {
   private lastCost = Infinity
   private stagnantSteps = 0
 
+  // Relaxation: start with higher spacing and decay towards actual preferred value
+  private effectiveTraceToTraceSpacing: number = 0
+
   constructor(public problem: CurvyTraceProblem) {
     super()
     for (const obstacle of this.problem.obstacles) {
@@ -483,7 +486,9 @@ export class CurvyTraceSolver extends BaseSolver {
 
   // Determine which trace pairs could possibly collide based on bounding boxes
   private updateCollisionPairs() {
-    const { preferredTraceToTraceSpacing: preferredSpacing } = this.problem
+    // Use effective spacing for collision pair detection - this expands the search radius
+    // during early optimization when effective spacing is higher
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
     this.collisionPairs = []
 
     for (let i = 0; i < this.traces.length; i++) {
@@ -495,12 +500,12 @@ export class CurvyTraceSolver extends BaseSolver {
 
         const bi = this.traceBounds[i],
           bj = this.traceBounds[j]
-        // Check if bounding boxes (expanded by preferredSpacing) overlap
+        // Check if bounding boxes (expanded by effectiveSpacing) overlap
         if (
-          bi.maxX + preferredSpacing >= bj.minX &&
-          bj.maxX + preferredSpacing >= bi.minX &&
-          bi.maxY + preferredSpacing >= bj.minY &&
-          bj.maxY + preferredSpacing >= bi.minY
+          bi.maxX + effectiveSpacing >= bj.minX &&
+          bj.maxX + effectiveSpacing >= bi.minX &&
+          bi.maxY + effectiveSpacing >= bj.minY &&
+          bj.maxY + effectiveSpacing >= bi.minY
         ) {
           this.collisionPairs.push([i, j])
         }
@@ -509,9 +514,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeTotalCost(): number {
-    const { preferredTraceToTraceSpacing, preferredObstacleToTraceSpacing } =
-      this.problem
-    const traceSpacingSq = preferredTraceToTraceSpacing ** 2
+    const { preferredObstacleToTraceSpacing } = this.problem
+    // Use effective spacing (decays from high value towards preferred during optimization)
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
+    const traceSpacingSq = effectiveSpacing ** 2
     const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
     let cost = 0
 
@@ -535,7 +541,7 @@ export class CurvyTraceSolver extends BaseSolver {
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < traceSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredTraceToTraceSpacing - dist) ** 2
+            cost += (effectiveSpacing - dist) ** 2
             if (distSq < 1e-18) cost += 20 * traceSpacingSq
           }
         }
@@ -595,9 +601,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeCostForTrace(traceIdx: number): number {
-    const { preferredTraceToTraceSpacing, preferredObstacleToTraceSpacing } =
-      this.problem
-    const traceSpacingSq = preferredTraceToTraceSpacing ** 2
+    const { preferredObstacleToTraceSpacing } = this.problem
+    // Use effective spacing (decays from high value towards preferred during optimization)
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
+    const traceSpacingSq = effectiveSpacing ** 2
     const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
     const trace = this.traces[traceIdx]
     const pi = this.sampledPoints[traceIdx]
@@ -616,12 +623,12 @@ export class CurvyTraceSolver extends BaseSolver {
         continue
 
       const bj = this.traceBounds[j]
-      // Bounding box check
+      // Bounding box check using effective spacing
       if (
-        bi.maxX + preferredTraceToTraceSpacing < bj.minX ||
-        bj.maxX + preferredTraceToTraceSpacing < bi.minX ||
-        bi.maxY + preferredTraceToTraceSpacing < bj.minY ||
-        bj.maxY + preferredTraceToTraceSpacing < bi.minY
+        bi.maxX + effectiveSpacing < bj.minX ||
+        bj.maxX + effectiveSpacing < bi.minX ||
+        bi.maxY + effectiveSpacing < bj.minY ||
+        bj.maxY + effectiveSpacing < bi.minY
       )
         continue
 
@@ -641,7 +648,7 @@ export class CurvyTraceSolver extends BaseSolver {
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < traceSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredTraceToTraceSpacing - dist) ** 2
+            cost += (effectiveSpacing - dist) ** 2
             if (distSq < 1e-18) cost += 20 * traceSpacingSq
           }
         }
@@ -946,9 +953,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private optimizeStep() {
-    const { bounds, preferredTraceToTraceSpacing } = this.problem
+    const { bounds } = this.problem
     const { minX, maxX, minY, maxY } = bounds
     const minDim = Math.min(maxX - minX, maxY - minY)
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
 
     // Adaptive step size for perpendicular distances
     const progress = this.optimizationStep / this.maxOptimizationSteps
@@ -985,8 +993,8 @@ export class CurvyTraceSolver extends BaseSolver {
                 -step * 2,
                 step * 3,
                 -step * 3,
-                preferredTraceToTraceSpacing * 2,
-                -preferredTraceToTraceSpacing * 2,
+                effectiveSpacing * 2,
+                -effectiveSpacing * 2,
               ]
             : [step, -step, step * 2, -step * 2]
 
@@ -1087,12 +1095,24 @@ export class CurvyTraceSolver extends BaseSolver {
 
   override _step() {
     if (this.traces.length === 0) {
+      // Initialize effective spacing to 3x preferred - will decay during optimization
+      this.effectiveTraceToTraceSpacing =
+        this.problem.preferredTraceToTraceSpacing * 3
       this.initializeTraces()
       this.lastCost = this.computeTotalCost()
       this.stagnantSteps = 0
     }
 
     if (this.optimizationStep < this.maxOptimizationSteps) {
+      // Decay effective spacing towards the actual preferred value
+      const progress = this.optimizationStep / this.maxOptimizationSteps
+      const startMultiplier = 3.0
+      const endMultiplier = 1.0
+      const currentMultiplier =
+        startMultiplier + (endMultiplier - startMultiplier) * progress
+      this.effectiveTraceToTraceSpacing =
+        this.problem.preferredTraceToTraceSpacing * currentMultiplier
+
       this.optimizeStep()
       this.optimizationStep++
 
