@@ -51,6 +51,7 @@ export const visualizeCurvyTraceProblem = (
       height: obstacle.maxY - obstacle.minY,
       fill: "rgba(128, 128, 128, 0.3)",
       stroke: "rgba(128, 128, 128, 0.8)",
+      label: `netId: ${obstacle.networkId}`,
     })
   }
 
