@@ -403,7 +403,7 @@ export class CurvyTraceSolver extends BaseSolver {
 
   // Determine which trace pairs could possibly collide based on bounding boxes
   private updateCollisionPairs() {
-    const { preferredSpacing } = this.problem
+    const { preferredTraceToTraceSpacing: preferredSpacing } = this.problem
     this.collisionPairs = []
 
     for (let i = 0; i < this.traces.length; i++) {
@@ -429,8 +429,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeTotalCost(): number {
-    const { preferredSpacing } = this.problem
-    const spacingSq = preferredSpacing * preferredSpacing
+    const { preferredTraceToTraceSpacing, preferredObstacleToTraceSpacing } =
+      this.problem
+    const traceSpacingSq = preferredTraceToTraceSpacing ** 2
+    const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
     let cost = 0
 
     // Cost between traces using collision pairs
@@ -451,10 +453,10 @@ export class CurvyTraceSolver extends BaseSolver {
             b2y = pj[(b + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
-          if (distSq < spacingSq) {
+          if (distSq < traceSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredSpacing - dist) ** 2
-            if (distSq < 1e-18) cost += 20 * spacingSq
+            cost += (preferredTraceToTraceSpacing - dist) ** 2
+            if (distSq < 1e-18) cost += 20 * traceSpacingSq
           }
         }
       }
@@ -486,10 +488,10 @@ export class CurvyTraceSolver extends BaseSolver {
         const obsMinY = Math.min(oy1, oy2),
           obsMaxY = Math.max(oy1, oy2)
         if (
-          bi.maxX + preferredSpacing < obsMinX ||
-          obsMaxX + preferredSpacing < bi.minX ||
-          bi.maxY + preferredSpacing < obsMinY ||
-          obsMaxY + preferredSpacing < bi.minY
+          bi.maxX + preferredObstacleToTraceSpacing < obsMinX ||
+          obsMaxX + preferredObstacleToTraceSpacing < bi.minX ||
+          bi.maxY + preferredObstacleToTraceSpacing < obsMinY ||
+          obsMaxY + preferredObstacleToTraceSpacing < bi.minY
         )
           continue
 
@@ -500,10 +502,10 @@ export class CurvyTraceSolver extends BaseSolver {
             a2y = pi[(a + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, ox1, oy1, ox2, oy2)
-          if (distSq < spacingSq) {
+          if (distSq < obstacleSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredSpacing - dist) ** 2
-            if (distSq < 1e-18) cost += 20 * spacingSq
+            cost += (preferredObstacleToTraceSpacing - dist) ** 2
+            if (distSq < 1e-18) cost += 20 * obstacleSpacingSq
           }
         }
       }
@@ -513,8 +515,10 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   private computeCostForTrace(traceIdx: number): number {
-    const { preferredSpacing } = this.problem
-    const spacingSq = preferredSpacing * preferredSpacing
+    const { preferredTraceToTraceSpacing, preferredObstacleToTraceSpacing } =
+      this.problem
+    const traceSpacingSq = preferredTraceToTraceSpacing ** 2
+    const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
     const trace = this.traces[traceIdx]
     const pi = this.sampledPoints[traceIdx]
     const bi = this.traceBounds[traceIdx]
@@ -534,10 +538,10 @@ export class CurvyTraceSolver extends BaseSolver {
       const bj = this.traceBounds[j]
       // Bounding box check
       if (
-        bi.maxX + preferredSpacing < bj.minX ||
-        bj.maxX + preferredSpacing < bi.minX ||
-        bi.maxY + preferredSpacing < bj.minY ||
-        bj.maxY + preferredSpacing < bi.minY
+        bi.maxX + preferredTraceToTraceSpacing < bj.minX ||
+        bj.maxX + preferredTraceToTraceSpacing < bi.minX ||
+        bi.maxY + preferredTraceToTraceSpacing < bj.minY ||
+        bj.maxY + preferredTraceToTraceSpacing < bi.minY
       )
         continue
 
@@ -555,10 +559,10 @@ export class CurvyTraceSolver extends BaseSolver {
             b2y = pj[(b + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
-          if (distSq < spacingSq) {
+          if (distSq < traceSpacingSq) {
             const dist = Math.sqrt(distSq)
-            cost += (preferredSpacing - dist) ** 2
-            if (distSq < 1e-18) cost += 20 * spacingSq
+            cost += (preferredTraceToTraceSpacing - dist) ** 2
+            if (distSq < 1e-18) cost += 20 * traceSpacingSq
           }
         }
       }
@@ -584,10 +588,10 @@ export class CurvyTraceSolver extends BaseSolver {
       const obsMinY = Math.min(oy1, oy2),
         obsMaxY = Math.max(oy1, oy2)
       if (
-        bi.maxX + preferredSpacing < obsMinX ||
-        obsMaxX + preferredSpacing < bi.minX ||
-        bi.maxY + preferredSpacing < obsMinY ||
-        obsMaxY + preferredSpacing < bi.minY
+        bi.maxX + preferredObstacleToTraceSpacing < obsMinX ||
+        obsMaxX + preferredObstacleToTraceSpacing < bi.minX ||
+        bi.maxY + preferredObstacleToTraceSpacing < obsMinY ||
+        obsMaxY + preferredObstacleToTraceSpacing < bi.minY
       )
         continue
 
@@ -598,10 +602,10 @@ export class CurvyTraceSolver extends BaseSolver {
           a2y = pi[(a + 1) * 2 + 1]
 
         const distSq = segmentDistSq(a1x, a1y, a2x, a2y, ox1, oy1, ox2, oy2)
-        if (distSq < spacingSq) {
+        if (distSq < obstacleSpacingSq) {
           const dist = Math.sqrt(distSq)
-          cost += (preferredSpacing - dist) ** 2
-          if (distSq < 1e-18) cost += 20 * spacingSq
+          cost += (preferredObstacleToTraceSpacing - dist) ** 2
+          if (distSq < 1e-18) cost += 20 * obstacleSpacingSq
         }
       }
     }

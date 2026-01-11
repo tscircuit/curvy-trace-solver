@@ -25,7 +25,8 @@ export interface CurvyTraceProblem {
   bounds: Bounds
   waypointPairs: WaypointPair[]
   obstacles: Obstacle[]
-  preferredSpacing: number
+  preferredTraceToTraceSpacing: number
+  preferredObstacleToTraceSpacing: number
 }
 
 export interface OutputTrace {

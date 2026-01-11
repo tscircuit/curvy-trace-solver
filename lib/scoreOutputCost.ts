@@ -24,7 +24,7 @@ export const scoreOutputCost = ({
   outputTraces: OutputTrace[]
   samplesPerTrace?: number
 }): number => {
-  const { preferredSpacing, obstacles } = problem
+  const { preferredTraceToTraceSpacing: preferredSpacing, obstacles } = problem
 
   // Collect all trace segments
   const allTraceSegments: { segment: [Point, Point]; networkId?: string }[] = []

@@ -11,5 +11,6 @@
     }
   ],
   "obstacles": [],
-  "preferredSpacing": 25
+  "preferredTraceToTraceSpacing": 25,
+  "preferredObstacleToTraceSpacing": 25
 }
