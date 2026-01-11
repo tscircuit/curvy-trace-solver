@@ -5,8 +5,20 @@ import { scoreOutputCost } from "../../lib/scoreOutputCost"
 const NUM_PROBLEMS = 25
 const MIN_WAYPOINT_PAIRS = 2
 const MAX_WAYPOINT_PAIRS = 12
+const BENCHMARK_SEED = 42
+
+// Simple seeded PRNG (mulberry32)
+function createSeededRandom(seed: number) {
+  return () => {
+    let t = (seed += 0x6d2b79f5)
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 function runBenchmark() {
+  const random = createSeededRandom(BENCHMARK_SEED)
   const scores: number[] = []
   const startTime = performance.now()
 
@@ -18,7 +30,7 @@ function runBenchmark() {
   for (let i = 0; i < NUM_PROBLEMS; i++) {
     const numWaypointPairs =
       MIN_WAYPOINT_PAIRS +
-      Math.floor(Math.random() * (MAX_WAYPOINT_PAIRS - MIN_WAYPOINT_PAIRS + 1))
+      Math.floor(random() * (MAX_WAYPOINT_PAIRS - MIN_WAYPOINT_PAIRS + 1))
 
     const problem = generateRandomProblem({
       randomSeed: i,

@@ -12,6 +12,11 @@ interface TraceWithControlPoints {
   networkId?: string
   t1: number
   t2: number
+  // Perpendicular constraint data
+  perpDir1: Point // Inward perpendicular direction at start
+  perpDir2: Point // Inward perpendicular direction at end
+  d1: number // Distance along perpDir1 from start to ctrl1
+  d2: number // Distance along perpDir2 from end to ctrl2
 }
 
 // Get perimeter position for a point on the boundary
@@ -28,18 +33,36 @@ function getPerimeterT(p: Point, bounds: Bounds): number {
   return 0
 }
 
-// Get point on perimeter at position t
-function getPerimeterPoint(t: number, bounds: Bounds): Point {
+// Get the inward perpendicular direction for a point on the boundary
+// Returns a unit vector pointing inward, perpendicular to the boundary edge
+function getInwardPerpendicular(p: Point, bounds: Bounds): Point {
   const { minX, maxX, minY, maxY } = bounds
-  const W = maxX - minX
-  const H = maxY - minY
-  const perimeter = 2 * W + 2 * H
-  t = ((t % perimeter) + perimeter) % perimeter
+  const eps = 1e-6
 
-  if (t <= W) return { x: minX + t, y: maxY }
-  if (t <= W + H) return { x: maxX, y: maxY - (t - W) }
-  if (t <= 2 * W + H) return { x: maxX - (t - W - H), y: minY }
-  return { x: minX, y: minY + (t - 2 * W - H) }
+  const onTop = Math.abs(p.y - maxY) < eps
+  const onBottom = Math.abs(p.y - minY) < eps
+  const onRight = Math.abs(p.x - maxX) < eps
+  const onLeft = Math.abs(p.x - minX) < eps
+
+  // Handle corners - perpendicular points diagonally inward
+  if (onTop && onRight) return { x: -Math.SQRT1_2, y: -Math.SQRT1_2 }
+  if (onTop && onLeft) return { x: Math.SQRT1_2, y: -Math.SQRT1_2 }
+  if (onBottom && onRight) return { x: -Math.SQRT1_2, y: Math.SQRT1_2 }
+  if (onBottom && onLeft) return { x: Math.SQRT1_2, y: Math.SQRT1_2 }
+
+  // Handle edges
+  if (onTop) return { x: 0, y: -1 }
+  if (onBottom) return { x: 0, y: 1 }
+  if (onRight) return { x: -1, y: 0 }
+  if (onLeft) return { x: 1, y: 0 }
+
+  // Fallback: point toward center
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  const dx = cx - p.x
+  const dy = cy - p.y
+  const len = Math.hypot(dx, dy)
+  return len > 0 ? { x: dx / len, y: dy / len } : { x: 0, y: -1 }
 }
 
 // Inline bezier sampling for performance - returns points directly into provided array
@@ -292,25 +315,21 @@ export class CurvyTraceSolver extends BaseSolver {
     const maxDepth = Math.max(...Array.from(nestingDepth.values()), 1)
 
     this.traces = tracesWithT.map(({ pair, t1, t2, idx }) => {
-      let dt = t2 - t1
-      if (dt > perimeter / 2) dt -= perimeter
-      if (dt < -perimeter / 2) dt += perimeter
+      // Get inward perpendicular directions at start and end
+      const perpDir1 = getInwardPerpendicular(pair.start, bounds)
+      const perpDir2 = getInwardPerpendicular(pair.end, bounds)
 
-      const tCtrl1 = t1 + dt * 0.33
-      const tCtrl2 = t1 + dt * 0.67
+      // Calculate chord length for initial distance estimation
+      const chordLength = Math.hypot(
+        pair.end.x - pair.start.x,
+        pair.end.y - pair.start.y,
+      )
 
-      const pPerim1 = getPerimeterPoint(tCtrl1, bounds)
-      const pPerim2 = getPerimeterPoint(tCtrl2, bounds)
+      // Compute nesting depth for this trace
+      const depth = nestingDepth.get(idx) || 0
+      const normalizedDepth = depth / maxDepth
 
-      const pLinear1 = {
-        x: pair.start.x + (pair.end.x - pair.start.x) * 0.33,
-        y: pair.start.y + (pair.end.y - pair.start.y) * 0.33,
-      }
-      const pLinear2 = {
-        x: pair.start.x + (pair.end.x - pair.start.x) * 0.67,
-        y: pair.start.y + (pair.end.y - pair.start.y) * 0.67,
-      }
-
+      // Compute spatial depth based on midpoint distance to center
       const midPoint = {
         x: (pair.start.x + pair.end.x) / 2,
         y: (pair.start.y + pair.end.y) / 2,
@@ -322,25 +341,38 @@ export class CurvyTraceSolver extends BaseSolver {
       const maxDist = Math.hypot(W / 2, H / 2)
       const spatialDepth = 1 - distToCenter / maxDist
 
-      const depth = nestingDepth.get(idx) || 0
-      const normalizedDepth = depth / maxDepth
+      // Initial perpendicular distances: proportional to chord length
+      // Nested traces get smaller distances, traces near edges get larger distances
+      const baseFactor = 0.25 + spatialDepth * 0.15
+      const depthAdjustment = 1 - normalizedDepth * 0.3
+      const initialDist = chordLength * baseFactor * depthAdjustment
 
-      const basePull = 0.3 + spatialDepth * 0.4
-      const pullAmount = Math.max(0.05, basePull - normalizedDepth * 0.2)
+      // Ensure minimum distance for reasonable curve shape
+      const minDist = Math.min(W, H) * 0.05
+      const d1 = Math.max(minDist, initialDist)
+      const d2 = Math.max(minDist, initialDist)
+
+      // Compute control points from perpendicular directions and distances
+      const ctrl1 = {
+        x: pair.start.x + d1 * perpDir1.x,
+        y: pair.start.y + d1 * perpDir1.y,
+      }
+      const ctrl2 = {
+        x: pair.end.x + d2 * perpDir2.x,
+        y: pair.end.y + d2 * perpDir2.y,
+      }
 
       return {
         waypointPair: pair,
-        ctrl1: {
-          x: pLinear1.x * (1 - pullAmount) + pPerim1.x * pullAmount,
-          y: pLinear1.y * (1 - pullAmount) + pPerim1.y * pullAmount,
-        },
-        ctrl2: {
-          x: pLinear2.x * (1 - pullAmount) + pPerim2.x * pullAmount,
-          y: pLinear2.y * (1 - pullAmount) + pPerim2.y * pullAmount,
-        },
+        ctrl1,
+        ctrl2,
         networkId: pair.networkId,
         t1,
         t2,
+        perpDir1,
+        perpDir2,
+        d1,
+        d2,
       }
     })
 
@@ -399,6 +431,15 @@ export class CurvyTraceSolver extends BaseSolver {
       this.sampledPoints[i],
       OPT_SAMPLES + 1,
     )
+  }
+
+  // Update control points from perpendicular distances
+  private updateControlPointsFromDistances(i: number) {
+    const trace = this.traces[i]
+    trace.ctrl1.x = trace.waypointPair.start.x + trace.d1 * trace.perpDir1.x
+    trace.ctrl1.y = trace.waypointPair.start.y + trace.d1 * trace.perpDir1.y
+    trace.ctrl2.x = trace.waypointPair.end.x + trace.d2 * trace.perpDir2.x
+    trace.ctrl2.y = trace.waypointPair.end.y + trace.d2 * trace.perpDir2.y
   }
 
   // Determine which trace pairs could possibly collide based on bounding boxes
@@ -616,11 +657,15 @@ export class CurvyTraceSolver extends BaseSolver {
   private optimizeStep() {
     const { bounds } = this.problem
     const { minX, maxX, minY, maxY } = bounds
+    const minDim = Math.min(maxX - minX, maxY - minY)
 
-    // Adaptive step size
+    // Adaptive step size for perpendicular distances
     const progress = this.optimizationStep / this.maxOptimizationSteps
     const baseStep = 3.5 * (1 - progress) + 0.5
-    const SQRT1_2 = Math.SQRT1_2
+
+    // Minimum and maximum perpendicular distances
+    const minDist = minDim * 0.02
+    const maxDist = minDim * 1.5
 
     // Sort traces by cost (worst first)
     const traceCosts: { idx: number; cost: number }[] = []
@@ -636,83 +681,78 @@ export class CurvyTraceSolver extends BaseSolver {
       const steps = [baseStep, baseStep * 1.5, baseStep * 0.5]
 
       for (const step of steps) {
-        const directions = [
-          { dx: step, dy: 0 },
-          { dx: -step, dy: 0 },
-          { dx: 0, dy: step },
-          { dx: 0, dy: -step },
-          { dx: step * SQRT1_2, dy: step * SQRT1_2 },
-          { dx: -step * SQRT1_2, dy: -step * SQRT1_2 },
-          { dx: step * SQRT1_2, dy: -step * SQRT1_2 },
-          { dx: -step * SQRT1_2, dy: step * SQRT1_2 },
-        ]
+        // Distance deltas to try (increase/decrease perpendicular distance)
+        const deltas = [step, -step, step * 2, -step * 2]
 
         let bestCost = this.computeCostForTrace(i)
-        let bestCtrl1x = trace.ctrl1.x
-        let bestCtrl1y = trace.ctrl1.y
-        let bestCtrl2x = trace.ctrl2.x
-        let bestCtrl2y = trace.ctrl2.y
+        let bestD1 = trace.d1
+        let bestD2 = trace.d2
 
-        const origCtrl1x = trace.ctrl1.x
-        const origCtrl1y = trace.ctrl1.y
-        const origCtrl2x = trace.ctrl2.x
-        const origCtrl2y = trace.ctrl2.y
+        const origD1 = trace.d1
+        const origD2 = trace.d2
 
-        for (const dir of directions) {
-          // Try ctrl1
-          trace.ctrl1.x = Math.max(minX, Math.min(maxX, origCtrl1x + dir.dx))
-          trace.ctrl1.y = Math.max(minY, Math.min(maxY, origCtrl1y + dir.dy))
+        for (const delta of deltas) {
+          // Try adjusting d1 (control point 1 distance)
+          trace.d1 = Math.max(minDist, Math.min(maxDist, origD1 + delta))
+          this.updateControlPointsFromDistances(i)
           this.updateSingleTraceSample(i)
           const cost1 = this.computeCostForTrace(i)
           if (cost1 < bestCost) {
             bestCost = cost1
-            bestCtrl1x = trace.ctrl1.x
-            bestCtrl1y = trace.ctrl1.y
-            bestCtrl2x = origCtrl2x
-            bestCtrl2y = origCtrl2y
+            bestD1 = trace.d1
+            bestD2 = origD2
           }
-          trace.ctrl1.x = origCtrl1x
-          trace.ctrl1.y = origCtrl1y
+          trace.d1 = origD1
+          this.updateControlPointsFromDistances(i)
 
-          // Try ctrl2
-          trace.ctrl2.x = Math.max(minX, Math.min(maxX, origCtrl2x + dir.dx))
-          trace.ctrl2.y = Math.max(minY, Math.min(maxY, origCtrl2y + dir.dy))
+          // Try adjusting d2 (control point 2 distance)
+          trace.d2 = Math.max(minDist, Math.min(maxDist, origD2 + delta))
+          this.updateControlPointsFromDistances(i)
           this.updateSingleTraceSample(i)
           const cost2 = this.computeCostForTrace(i)
           if (cost2 < bestCost) {
             bestCost = cost2
-            bestCtrl1x = origCtrl1x
-            bestCtrl1y = origCtrl1y
-            bestCtrl2x = trace.ctrl2.x
-            bestCtrl2y = trace.ctrl2.y
+            bestD1 = origD1
+            bestD2 = trace.d2
           }
-          trace.ctrl2.x = origCtrl2x
-          trace.ctrl2.y = origCtrl2y
+          trace.d2 = origD2
+          this.updateControlPointsFromDistances(i)
 
-          // Try both together
-          trace.ctrl1.x = Math.max(minX, Math.min(maxX, origCtrl1x + dir.dx))
-          trace.ctrl1.y = Math.max(minY, Math.min(maxY, origCtrl1y + dir.dy))
-          trace.ctrl2.x = Math.max(minX, Math.min(maxX, origCtrl2x + dir.dx))
-          trace.ctrl2.y = Math.max(minY, Math.min(maxY, origCtrl2y + dir.dy))
+          // Try adjusting both together (same direction)
+          trace.d1 = Math.max(minDist, Math.min(maxDist, origD1 + delta))
+          trace.d2 = Math.max(minDist, Math.min(maxDist, origD2 + delta))
+          this.updateControlPointsFromDistances(i)
           this.updateSingleTraceSample(i)
           const cost3 = this.computeCostForTrace(i)
           if (cost3 < bestCost) {
             bestCost = cost3
-            bestCtrl1x = trace.ctrl1.x
-            bestCtrl1y = trace.ctrl1.y
-            bestCtrl2x = trace.ctrl2.x
-            bestCtrl2y = trace.ctrl2.y
+            bestD1 = trace.d1
+            bestD2 = trace.d2
           }
-          trace.ctrl1.x = origCtrl1x
-          trace.ctrl1.y = origCtrl1y
-          trace.ctrl2.x = origCtrl2x
-          trace.ctrl2.y = origCtrl2y
+          trace.d1 = origD1
+          trace.d2 = origD2
+          this.updateControlPointsFromDistances(i)
+
+          // Try adjusting both in opposite directions
+          trace.d1 = Math.max(minDist, Math.min(maxDist, origD1 + delta))
+          trace.d2 = Math.max(minDist, Math.min(maxDist, origD2 - delta))
+          this.updateControlPointsFromDistances(i)
+          this.updateSingleTraceSample(i)
+          const cost4 = this.computeCostForTrace(i)
+          if (cost4 < bestCost) {
+            bestCost = cost4
+            bestD1 = trace.d1
+            bestD2 = trace.d2
+          }
+          trace.d1 = origD1
+          trace.d2 = origD2
+          this.updateControlPointsFromDistances(i)
         }
 
-        trace.ctrl1.x = bestCtrl1x
-        trace.ctrl1.y = bestCtrl1y
-        trace.ctrl2.x = bestCtrl2x
-        trace.ctrl2.y = bestCtrl2y
+        // Apply best found distances
+        trace.d1 = bestD1
+        trace.d2 = bestD2
+        this.updateControlPointsFromDistances(i)
         this.updateSingleTraceSample(i)
 
         if (bestCost < currentCost * 0.9) break // Found significant improvement
