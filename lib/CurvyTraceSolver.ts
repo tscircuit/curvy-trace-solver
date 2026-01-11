@@ -17,6 +17,8 @@ interface TraceWithControlPoints {
   perpDir2: Point // Inward perpendicular direction at end
   d1: number // Distance along perpDir1 from start to ctrl1
   d2: number // Distance along perpDir2 from end to ctrl2
+  containedBy: number[] // Indices of traces that contain this trace
+  contains: number[] // Indices of traces this trace contains
 }
 
 // Get perimeter position for a point on the boundary
@@ -173,6 +175,28 @@ function segmentDistSq(
   )
 }
 
+// Check if two segments actually intersect (not just close)
+function segmentsIntersect(
+  a1x: number,
+  a1y: number,
+  a2x: number,
+  a2y: number,
+  b1x: number,
+  b1y: number,
+  b2x: number,
+  b2y: number,
+): boolean {
+  const d1 = (b2x - b1x) * (a1y - b1y) - (b2y - b1y) * (a1x - b1x)
+  const d2 = (b2x - b1x) * (a2y - b1y) - (b2y - b1y) * (a2x - b1x)
+  const d3 = (a2x - a1x) * (b1y - a1y) - (a2y - a1y) * (b1x - a1x)
+  const d4 = (a2x - a1x) * (b2y - a1y) - (a2y - a1y) * (b2x - a1x)
+
+  return (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  )
+}
+
 // Check if chord A contains chord B
 function chordContains(
   aT1: number,
@@ -298,21 +322,34 @@ export class CurvyTraceSolver extends BaseSolver {
       idx,
     }))
 
-    const nestingDepth = new Map<number, number>()
+    // Compute containment relationships between all traces
+    const containedBy: number[][] = tracesWithT.map(() => [])
+    const contains: number[][] = tracesWithT.map(() => [])
+
     for (const trace of tracesWithT) {
-      let depth = 0
       for (const other of tracesWithT) {
-        if (
-          trace.idx !== other.idx &&
-          chordContains(other.t1, other.t2, trace.t1, trace.t2, perimeter)
-        ) {
-          depth++
+        if (trace.idx !== other.idx) {
+          // Skip if same network
+          if (
+            trace.pair.networkId &&
+            other.pair.networkId &&
+            trace.pair.networkId === other.pair.networkId
+          ) {
+            continue
+          }
+          if (
+            chordContains(other.t1, other.t2, trace.t1, trace.t2, perimeter)
+          ) {
+            containedBy[trace.idx].push(other.idx)
+            contains[other.idx].push(trace.idx)
+          }
         }
       }
-      nestingDepth.set(trace.idx, depth)
     }
 
-    const maxDepth = Math.max(...Array.from(nestingDepth.values()), 1)
+    // Compute nesting depth (how many traces contain this one)
+    const nestingDepth = containedBy.map((arr) => arr.length)
+    const maxDepth = Math.max(...nestingDepth, 1)
 
     this.traces = tracesWithT.map(({ pair, t1, t2, idx }) => {
       // Get inward perpendicular directions at start and end
@@ -326,7 +363,7 @@ export class CurvyTraceSolver extends BaseSolver {
       )
 
       // Compute nesting depth for this trace
-      const depth = nestingDepth.get(idx) || 0
+      const depth = nestingDepth[idx]
       const normalizedDepth = depth / maxDepth
 
       // Compute spatial depth based on midpoint distance to center
@@ -373,6 +410,8 @@ export class CurvyTraceSolver extends BaseSolver {
         perpDir2,
         d1,
         d2,
+        containedBy: containedBy[idx],
+        contains: contains[idx],
       }
     })
 
@@ -654,14 +693,266 @@ export class CurvyTraceSolver extends BaseSolver {
     return cost
   }
 
+  // Check if two traces intersect or are very close (potential intersection)
+  // Uses higher resolution sampling for accuracy
+  private tracesIntersect(i: number, j: number): boolean {
+    const trace1 = this.traces[i]
+    const trace2 = this.traces[j]
+
+    // Sample at higher resolution for intersection check
+    const INTERSECT_SAMPLES = 15
+    const p1 = new Float64Array((INTERSECT_SAMPLES + 1) * 2)
+    const p2 = new Float64Array((INTERSECT_SAMPLES + 1) * 2)
+
+    sampleCubicBezierInline(
+      trace1.waypointPair.start.x,
+      trace1.waypointPair.start.y,
+      trace1.ctrl1.x,
+      trace1.ctrl1.y,
+      trace1.ctrl2.x,
+      trace1.ctrl2.y,
+      trace1.waypointPair.end.x,
+      trace1.waypointPair.end.y,
+      p1,
+      INTERSECT_SAMPLES,
+    )
+    sampleCubicBezierInline(
+      trace2.waypointPair.start.x,
+      trace2.waypointPair.start.y,
+      trace2.ctrl1.x,
+      trace2.ctrl1.y,
+      trace2.ctrl2.x,
+      trace2.ctrl2.y,
+      trace2.waypointPair.end.x,
+      trace2.waypointPair.end.y,
+      p2,
+      INTERSECT_SAMPLES,
+    )
+
+    // Check for actual intersections only (to match scorer's threshold)
+    for (let a = 0; a < INTERSECT_SAMPLES; a++) {
+      const a1x = p1[a * 2]
+      const a1y = p1[a * 2 + 1]
+      const a2x = p1[(a + 1) * 2]
+      const a2y = p1[(a + 1) * 2 + 1]
+
+      for (let b = 0; b < INTERSECT_SAMPLES; b++) {
+        const b1x = p2[b * 2]
+        const b1y = p2[b * 2 + 1]
+        const b2x = p2[(b + 1) * 2]
+        const b2y = p2[(b + 1) * 2 + 1]
+
+        // Check for actual segment intersection
+        if (segmentsIntersect(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  // Find all pairs of traces that currently intersect
+  private findIntersectingPairs(): [number, number][] {
+    const intersecting: [number, number][] = []
+
+    for (let i = 0; i < this.traces.length; i++) {
+      for (let j = i + 1; j < this.traces.length; j++) {
+        const ti = this.traces[i]
+        const tj = this.traces[j]
+
+        // Skip if same network
+        if (ti.networkId && tj.networkId && ti.networkId === tj.networkId) {
+          continue
+        }
+
+        // Quick bounding box check
+        const bi = this.traceBounds[i]
+        const bj = this.traceBounds[j]
+        if (
+          bi.maxX < bj.minX ||
+          bj.maxX < bi.minX ||
+          bi.maxY < bj.minY ||
+          bj.maxY < bi.minY
+        ) {
+          continue
+        }
+
+        if (this.tracesIntersect(i, j)) {
+          intersecting.push([i, j])
+        }
+      }
+    }
+
+    return intersecting
+  }
+
+  // Resolve intersections by separating traces in depth
+  // Only keeps changes if they improve overall cost
+  private resolveIntersections(): number {
+    const { bounds, preferredTraceToTraceSpacing } = this.problem
+    const { minX, maxX, minY, maxY } = bounds
+    const minDim = Math.min(maxX - minX, maxY - minY)
+    const minDist = minDim * 0.02
+    const maxDist = minDim * 1.5
+
+    const intersecting = this.findIntersectingPairs()
+    if (intersecting.length === 0) return 0
+
+    let resolved = 0
+
+    for (const [i, j] of intersecting) {
+      const ti = this.traces[i]
+      const tj = this.traces[j]
+
+      // Skip if they no longer intersect (might have been fixed by earlier resolution)
+      if (!this.tracesIntersect(i, j)) continue
+
+      // Determine which trace should be outer (smaller depth) vs inner (larger depth)
+      let outerIdx: number
+      let innerIdx: number
+
+      if (ti.containedBy.includes(j)) {
+        // ti is contained by tj, so ti should be inner (go deeper)
+        outerIdx = j
+        innerIdx = i
+      } else if (tj.containedBy.includes(i)) {
+        // tj is contained by ti, so tj should be inner (go deeper)
+        outerIdx = i
+        innerIdx = j
+      } else {
+        // No containment relationship - the one with larger depth should go deeper
+        const avgDi = (ti.d1 + ti.d2) / 2
+        const avgDj = (tj.d1 + tj.d2) / 2
+        if (avgDi < avgDj) {
+          outerIdx = i
+          innerIdx = j
+        } else {
+          outerIdx = j
+          innerIdx = i
+        }
+      }
+
+      const outerTrace = this.traces[outerIdx]
+      const innerTrace = this.traces[innerIdx]
+
+      // Save original state
+      const origOuterD1 = outerTrace.d1
+      const origOuterD2 = outerTrace.d2
+      const origInnerD1 = innerTrace.d1
+      const origInnerD2 = innerTrace.d2
+      const costBeforeThis = this.computeTotalCost()
+
+      // Calculate the minimum separation needed
+      const separation = preferredTraceToTraceSpacing * 2
+
+      // Try strategies in order of aggressiveness
+      const strategies = [
+        // Strategy 1: Small increase for inner
+        { innerMult: 1, outerMult: 0 },
+        // Strategy 2: Small decrease for outer
+        { innerMult: 0, outerMult: 1 },
+        // Strategy 3: Both directions
+        { innerMult: 0.5, outerMult: 0.5 },
+        // Strategy 4: Larger increase for inner
+        { innerMult: 2, outerMult: 0 },
+        // Strategy 5: Both larger
+        { innerMult: 1, outerMult: 1 },
+        // More aggressive
+        { innerMult: 3, outerMult: 0 },
+        { innerMult: 2, outerMult: 1 },
+        { innerMult: 4, outerMult: 0 },
+      ]
+
+      let bestCost = costBeforeThis
+      let bestStrategy: { innerMult: number; outerMult: number } | null = null
+
+      for (const strategy of strategies) {
+        // Reset to original
+        outerTrace.d1 = origOuterD1
+        outerTrace.d2 = origOuterD2
+        innerTrace.d1 = origInnerD1
+        innerTrace.d2 = origInnerD2
+
+        // Apply strategy
+        innerTrace.d1 = Math.min(
+          maxDist,
+          origInnerD1 + separation * strategy.innerMult,
+        )
+        innerTrace.d2 = Math.min(
+          maxDist,
+          origInnerD2 + separation * strategy.innerMult,
+        )
+        outerTrace.d1 = Math.max(
+          minDist,
+          origOuterD1 - separation * strategy.outerMult,
+        )
+        outerTrace.d2 = Math.max(
+          minDist,
+          origOuterD2 - separation * strategy.outerMult,
+        )
+        this.updateControlPointsFromDistances(innerIdx)
+        this.updateControlPointsFromDistances(outerIdx)
+        this.updateSingleTraceSample(innerIdx)
+        this.updateSingleTraceSample(outerIdx)
+
+        // Check if intersection is resolved - prioritize eliminating intersections
+        if (!this.tracesIntersect(outerIdx, innerIdx)) {
+          const newCost = this.computeTotalCost()
+          // Accept if it eliminates intersection - use smaller changes when possible
+          if (bestStrategy === null || newCost < bestCost) {
+            bestCost = newCost
+            bestStrategy = strategy
+          }
+        }
+      }
+
+      // Apply best strategy or revert
+      if (bestStrategy) {
+        innerTrace.d1 = Math.min(
+          maxDist,
+          origInnerD1 + separation * bestStrategy.innerMult,
+        )
+        innerTrace.d2 = Math.min(
+          maxDist,
+          origInnerD2 + separation * bestStrategy.innerMult,
+        )
+        outerTrace.d1 = Math.max(
+          minDist,
+          origOuterD1 - separation * bestStrategy.outerMult,
+        )
+        outerTrace.d2 = Math.max(
+          minDist,
+          origOuterD2 - separation * bestStrategy.outerMult,
+        )
+        this.updateControlPointsFromDistances(innerIdx)
+        this.updateControlPointsFromDistances(outerIdx)
+        this.updateSingleTraceSample(innerIdx)
+        this.updateSingleTraceSample(outerIdx)
+        resolved++
+      } else {
+        // Revert to original
+        outerTrace.d1 = origOuterD1
+        outerTrace.d2 = origOuterD2
+        innerTrace.d1 = origInnerD1
+        innerTrace.d2 = origInnerD2
+        this.updateControlPointsFromDistances(outerIdx)
+        this.updateControlPointsFromDistances(innerIdx)
+        this.updateSingleTraceSample(outerIdx)
+        this.updateSingleTraceSample(innerIdx)
+      }
+    }
+
+    return resolved
+  }
+
   private optimizeStep() {
-    const { bounds } = this.problem
+    const { bounds, preferredTraceToTraceSpacing } = this.problem
     const { minX, maxX, minY, maxY } = bounds
     const minDim = Math.min(maxX - minX, maxY - minY)
 
     // Adaptive step size for perpendicular distances
     const progress = this.optimizationStep / this.maxOptimizationSteps
-    const baseStep = 3.5 * (1 - progress) + 0.5
+    const baseStep = 4.0 * (1 - progress) + 0.5
 
     // Minimum and maximum perpendicular distances
     const minDist = minDim * 0.02
@@ -678,11 +969,26 @@ export class CurvyTraceSolver extends BaseSolver {
       if (currentCost === 0) continue
 
       const trace = this.traces[i]
-      const steps = [baseStep, baseStep * 1.5, baseStep * 0.5]
+
+      // For high-cost traces, use larger steps
+      const costMultiplier = currentCost > 100 ? 2.0 : 1.0
+      const steps = [baseStep * costMultiplier, baseStep * 1.5 * costMultiplier, baseStep * 0.5]
 
       for (const step of steps) {
-        // Distance deltas to try (increase/decrease perpendicular distance)
-        const deltas = [step, -step, step * 2, -step * 2]
+        // Distance deltas to try - include larger jumps for high cost traces
+        const deltas =
+          currentCost > 100
+            ? [
+                step,
+                -step,
+                step * 2,
+                -step * 2,
+                step * 3,
+                -step * 3,
+                preferredTraceToTraceSpacing * 2,
+                -preferredTraceToTraceSpacing * 2,
+              ]
+            : [step, -step, step * 2, -step * 2]
 
         let bestCost = this.computeCostForTrace(i)
         let bestD1 = trace.d1
@@ -790,13 +1096,28 @@ export class CurvyTraceSolver extends BaseSolver {
       this.optimizeStep()
       this.optimizationStep++
 
+      // Periodically try to resolve intersections to help escape local minima
+      if (this.optimizationStep % 10 === 0) {
+        const resolved = this.resolveIntersections()
+        if (resolved > 0) {
+          this.updateCollisionPairs()
+        }
+      }
+
       const currentCost = this.computeTotalCost()
       if (currentCost === 0) {
         this.optimizationStep = this.maxOptimizationSteps
       } else if (currentCost >= this.lastCost * 0.99) {
         this.stagnantSteps++
-        if (this.stagnantSteps > 15) {
-          this.optimizationStep = this.maxOptimizationSteps
+        if (this.stagnantSteps > 10) {
+          // Try resolving intersections when stuck
+          const resolved = this.resolveIntersections()
+          if (resolved > 0) {
+            this.updateCollisionPairs()
+            this.stagnantSteps = 0 // Reset stagnation counter after successful resolution
+          } else if (this.stagnantSteps > 15) {
+            this.optimizationStep = this.maxOptimizationSteps
+          }
         }
       } else {
         this.stagnantSteps = 0
@@ -805,6 +1126,8 @@ export class CurvyTraceSolver extends BaseSolver {
     }
 
     if (this.optimizationStep >= this.maxOptimizationSteps) {
+      // Final pass to resolve any remaining intersections
+      this.resolveIntersections()
       this.buildOutputTraces()
       this.solved = true
     }
