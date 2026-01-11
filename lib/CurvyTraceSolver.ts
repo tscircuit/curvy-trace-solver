@@ -476,12 +476,44 @@ export class CurvyTraceSolver extends BaseSolver {
   }
 
   // Update control points from perpendicular distances
+  // Ensures control points don't go backwards through the edge the waypoint is on
   private updateControlPointsFromDistances(i: number) {
     const trace = this.traces[i]
-    trace.ctrl1.x = trace.waypointPair.start.x + trace.d1 * trace.perpDir1.x
-    trace.ctrl1.y = trace.waypointPair.start.y + trace.d1 * trace.perpDir1.y
-    trace.ctrl2.x = trace.waypointPair.end.x + trace.d2 * trace.perpDir2.x
-    trace.ctrl2.y = trace.waypointPair.end.y + trace.d2 * trace.perpDir2.y
+    const { minX, maxX, minY, maxY } = this.problem.bounds
+    const eps = 1e-6
+
+    // Compute raw control point positions
+    let ctrl1x = trace.waypointPair.start.x + trace.d1 * trace.perpDir1.x
+    let ctrl1y = trace.waypointPair.start.y + trace.d1 * trace.perpDir1.y
+    let ctrl2x = trace.waypointPair.end.x + trace.d2 * trace.perpDir2.x
+    let ctrl2y = trace.waypointPair.end.y + trace.d2 * trace.perpDir2.y
+
+    // Clamp ctrl1 to not go backwards through start's edge
+    const start = trace.waypointPair.start
+    if (Math.abs(start.x - minX) < eps) ctrl1x = Math.max(ctrl1x, minX) // left edge
+    if (Math.abs(start.x - maxX) < eps) ctrl1x = Math.min(ctrl1x, maxX) // right edge
+    if (Math.abs(start.y - minY) < eps) ctrl1y = Math.max(ctrl1y, minY) // bottom edge
+    if (Math.abs(start.y - maxY) < eps) ctrl1y = Math.min(ctrl1y, maxY) // top edge
+
+    // Clamp ctrl2 to not go backwards through end's edge
+    const end = trace.waypointPair.end
+    if (Math.abs(end.x - minX) < eps) ctrl2x = Math.max(ctrl2x, minX) // left edge
+    if (Math.abs(end.x - maxX) < eps) ctrl2x = Math.min(ctrl2x, maxX) // right edge
+    if (Math.abs(end.y - minY) < eps) ctrl2y = Math.max(ctrl2y, minY) // bottom edge
+    if (Math.abs(end.y - maxY) < eps) ctrl2y = Math.min(ctrl2y, maxY) // top edge
+
+    // Also clamp both control points to stay within overall bounds
+    // This ensures the Bézier curve (which is within convex hull of control points)
+    // stays within bounds
+    ctrl1x = Math.max(minX, Math.min(maxX, ctrl1x))
+    ctrl1y = Math.max(minY, Math.min(maxY, ctrl1y))
+    ctrl2x = Math.max(minX, Math.min(maxX, ctrl2x))
+    ctrl2y = Math.max(minY, Math.min(maxY, ctrl2y))
+
+    trace.ctrl1.x = ctrl1x
+    trace.ctrl1.y = ctrl1y
+    trace.ctrl2.x = ctrl2x
+    trace.ctrl2.y = ctrl2y
   }
 
   // Determine which trace pairs could possibly collide based on bounding boxes
