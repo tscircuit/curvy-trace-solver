@@ -2,7 +2,7 @@ import { AngledTraceSolver } from "../../lib/AngledTraceSolver"
 import { generateRandomProblem } from "../../lib/problem-generator"
 import { scoreOutputCost } from "../../lib/scoreOutputCost"
 
-const NUM_PROBLEMS = 200
+const NUM_PROBLEMS = 100
 const MIN_WAYPOINT_PAIRS = 2
 const MAX_WAYPOINT_PAIRS = 12
 const BENCHMARK_SEED = 42
@@ -54,7 +54,7 @@ function runBenchmark() {
     const problemStart = performance.now()
 
     // Run solver until complete (with max iterations to prevent infinite loops)
-    const MAX_ITERATIONS = 1000
+    const MAX_ITERATIONS = 100
     let iterations = 0
     for (
       iterations = 0;

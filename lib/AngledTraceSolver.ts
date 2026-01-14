@@ -98,32 +98,7 @@ function getBoundsCenter(bounds: Bounds): Point {
   }
 }
 
-// Point to segment distance squared
-function ptSegDistSq(
-  px: number,
-  py: number,
-  sx: number,
-  sy: number,
-  ex: number,
-  ey: number,
-): number {
-  const dx = ex - sx
-  const dy = ey - sy
-  const lenSq = dx * dx + dy * dy
-  if (lenSq === 0) {
-    const dpx = px - sx
-    const dpy = py - sy
-    return dpx * dpx + dpy * dpy
-  }
-  const t = Math.max(0, Math.min(1, ((px - sx) * dx + (py - sy) * dy) / lenSq))
-  const projX = sx + t * dx
-  const projY = sy + t * dy
-  const dpx = px - projX
-  const dpy = py - projY
-  return dpx * dpx + dpy * dpy
-}
-
-// Segment-to-segment distance squared
+// Inlined segment-to-segment distance squared for performance
 function segmentDistSq(
   a1x: number,
   a1y: number,
@@ -134,25 +109,96 @@ function segmentDistSq(
   b2x: number,
   b2y: number,
 ): number {
-  // Check for intersection first
-  const d1 = (b2x - b1x) * (a1y - b1y) - (b2y - b1y) * (a1x - b1x)
-  const d2 = (b2x - b1x) * (a2y - b1y) - (b2y - b1y) * (a2x - b1x)
-  const d3 = (a2x - a1x) * (b1y - a1y) - (a2y - a1y) * (b1x - a1x)
-  const d4 = (a2x - a1x) * (b2y - a1y) - (a2y - a1y) * (b2x - a1x)
+  // Check for intersection first using cross products
+  const bDx = b2x - b1x
+  const bDy = b2y - b1y
+  const aDx = a2x - a1x
+  const aDy = a2y - a1y
 
-  if (
-    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
-    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
-  ) {
-    return 0
+  const d1 = bDx * (a1y - b1y) - bDy * (a1x - b1x)
+  const d2 = bDx * (a2y - b1y) - bDy * (a2x - b1x)
+
+  if ((d1 > 0) !== (d2 > 0)) {
+    const d3 = aDx * (b1y - a1y) - aDy * (b1x - a1x)
+    const d4 = aDx * (b2y - a1y) - aDy * (b2x - a1x)
+    if ((d3 > 0) !== (d4 > 0)) {
+      return 0 // Segments intersect
+    }
   }
 
-  return Math.min(
-    ptSegDistSq(a1x, a1y, b1x, b1y, b2x, b2y),
-    ptSegDistSq(a2x, a2y, b1x, b1y, b2x, b2y),
-    ptSegDistSq(b1x, b1y, a1x, a1y, a2x, a2y),
-    ptSegDistSq(b2x, b2y, a1x, a1y, a2x, a2y),
-  )
+  // Compute 4 point-to-segment distances inline
+  const bLenSq = bDx * bDx + bDy * bDy
+  const aLenSq = aDx * aDx + aDy * aDy
+
+  let minDistSq = Infinity
+  let t: number
+  let projX: number
+  let projY: number
+  let dpx: number
+  let dpy: number
+  let distSq: number
+
+  // a1 to segment b
+  if (bLenSq > 0) {
+    t = ((a1x - b1x) * bDx + (a1y - b1y) * bDy) / bLenSq
+    t = t < 0 ? 0 : t > 1 ? 1 : t
+    projX = b1x + t * bDx
+    projY = b1y + t * bDy
+  } else {
+    projX = b1x
+    projY = b1y
+  }
+  dpx = a1x - projX
+  dpy = a1y - projY
+  distSq = dpx * dpx + dpy * dpy
+  if (distSq < minDistSq) minDistSq = distSq
+
+  // a2 to segment b
+  if (bLenSq > 0) {
+    t = ((a2x - b1x) * bDx + (a2y - b1y) * bDy) / bLenSq
+    t = t < 0 ? 0 : t > 1 ? 1 : t
+    projX = b1x + t * bDx
+    projY = b1y + t * bDy
+  } else {
+    projX = b1x
+    projY = b1y
+  }
+  dpx = a2x - projX
+  dpy = a2y - projY
+  distSq = dpx * dpx + dpy * dpy
+  if (distSq < minDistSq) minDistSq = distSq
+
+  // b1 to segment a
+  if (aLenSq > 0) {
+    t = ((b1x - a1x) * aDx + (b1y - a1y) * aDy) / aLenSq
+    t = t < 0 ? 0 : t > 1 ? 1 : t
+    projX = a1x + t * aDx
+    projY = a1y + t * aDy
+  } else {
+    projX = a1x
+    projY = a1y
+  }
+  dpx = b1x - projX
+  dpy = b1y - projY
+  distSq = dpx * dpx + dpy * dpy
+  if (distSq < minDistSq) minDistSq = distSq
+
+  // b2 to segment a
+  if (aLenSq > 0) {
+    t = ((b2x - a1x) * aDx + (b2y - a1y) * aDy) / aLenSq
+    t = t < 0 ? 0 : t > 1 ? 1 : t
+    projX = a1x + t * aDx
+    projY = a1y + t * aDy
+  } else {
+    projX = a1x
+    projY = a1y
+  }
+  dpx = b2x - projX
+  dpy = b2y - projY
+  distSq = dpx * dpx + dpy * dpy
+  if (distSq < minDistSq) minDistSq = distSq
+
+  return minDistSq
 }
 
 // Check if two segments intersect
@@ -589,14 +635,14 @@ function samplePolyline(points: Point[], numSamples: number): Point[] {
   return sampled
 }
 
-const OPT_SAMPLES = 8 // More samples for angled traces since they have more segments
+const OPT_SAMPLES = 6 // Balanced for speed and collision detection
 const OUTPUT_SAMPLES = 20
 
 export class AngledTraceSolver extends BaseSolver {
   outputTraces: OutputTrace[] = []
   private traces: AngledTraceWithControlPoints[] = []
   private optimizationStep = 0
-  private readonly maxOptimizationSteps = 100
+  private readonly maxOptimizationSteps = 70 // Balanced between speed and quality
 
   // Sampled points for cost computation
   private sampledPoints: Float64Array[] = []
@@ -1342,128 +1388,108 @@ export class AngledTraceSolver extends BaseSolver {
     const { bounds } = this.problem
     const { minX, maxX, minY, maxY } = bounds
     const minDim = Math.min(maxX - minX, maxY - minY)
-    const effectiveSpacing = this.effectiveTraceToTraceSpacing
 
     const progress = this.optimizationStep / this.maxOptimizationSteps
-    const baseStep = 4.0 * (1 - progress) + 0.5
+    const step = 3.0 * (1 - progress) + 0.5
 
     const minDist = minDim * 0.02
     const maxDist = minDim * 1.5
 
-    // Sort traces by cost (worst first)
-    const traceCosts: { idx: number; cost: number }[] = []
+    // Process only traces with non-zero cost
     for (let i = 0; i < this.traces.length; i++) {
-      traceCosts.push({ idx: i, cost: this.computeCostForTrace(i) })
-    }
-    traceCosts.sort((a, b) => b.cost - a.cost)
-
-    for (const { idx: i, cost: currentCost } of traceCosts) {
+      const currentCost = this.computeCostForTrace(i)
       if (currentCost === 0) continue
 
       const trace = this.traces[i]
-      const costMultiplier = currentCost > 100 ? 2.0 : 1.0
-      const steps = [
-        baseStep * costMultiplier,
-        baseStep * 1.5 * costMultiplier,
-        baseStep * 0.5,
+      const origParams: [number, number, number] = [
+        trace.controlParams[0],
+        trace.controlParams[1],
+        trace.controlParams[2],
       ]
+      let bestCost = currentCost
+      let bestD1 = origParams[0]
+      let bestD2 = origParams[1]
+      let bestBend = origParams[2]
 
-      for (const step of steps) {
-        const deltas =
-          currentCost > 100
-            ? [step, -step, step * 2, -step * 2, step * 3, -step * 3]
-            : [step, -step, step * 2, -step * 2]
+      const largeStep = step * 2
 
-        const bendDeltas = [0.2, -0.2, 0.5, -0.5, 1, -1]
-
-        let bestCost = this.computeCostForTrace(i)
-        const bestParams = [...trace.controlParams] as [number, number, number]
-        const origParams = [...trace.controlParams] as [number, number, number]
-
-        // Try d1 adjustments
-        for (const delta of deltas) {
-          trace.controlParams[0] = Math.max(
-            minDist,
-            Math.min(maxDist, origParams[0] + delta),
-          )
+      // Try d1 +/- step and +/- 2*step
+      for (const delta of [step, -step, largeStep, -largeStep]) {
+        const newD1 = origParams[0] + delta
+        if (newD1 >= minDist && newD1 <= maxDist) {
+          trace.controlParams[0] = newD1
           this.updateTracePoints(i)
           this.updateSingleTraceSample(i)
           const cost = this.computeCostForTrace(i)
           if (cost < bestCost) {
             bestCost = cost
-            bestParams[0] = trace.controlParams[0]
-            bestParams[1] = origParams[1]
-            bestParams[2] = origParams[2]
+            bestD1 = newD1
           }
-          trace.controlParams[0] = origParams[0]
         }
+      }
+      trace.controlParams[0] = origParams[0]
 
-        // Try d2 adjustments
-        for (const delta of deltas) {
-          trace.controlParams[1] = Math.max(
-            minDist,
-            Math.min(maxDist, origParams[1] + delta),
-          )
+      // Try d2 +/- step and +/- 2*step
+      for (const delta of [step, -step, largeStep, -largeStep]) {
+        const newD2 = origParams[1] + delta
+        if (newD2 >= minDist && newD2 <= maxDist) {
+          trace.controlParams[1] = newD2
           this.updateTracePoints(i)
           this.updateSingleTraceSample(i)
           const cost = this.computeCostForTrace(i)
           if (cost < bestCost) {
             bestCost = cost
-            bestParams[0] = origParams[0]
-            bestParams[1] = trace.controlParams[1]
-            bestParams[2] = origParams[2]
+            bestD2 = newD2
+            bestD1 = origParams[0] // Reset d1 if d2 is better
           }
-          trace.controlParams[1] = origParams[1]
         }
+      }
+      trace.controlParams[1] = origParams[1]
 
-        // Try both d1 and d2 together
-        for (const delta of deltas) {
-          trace.controlParams[0] = Math.max(
-            minDist,
-            Math.min(maxDist, origParams[0] + delta),
-          )
-          trace.controlParams[1] = Math.max(
-            minDist,
-            Math.min(maxDist, origParams[1] + delta),
-          )
+      // Try both together +/- step
+      for (const delta of [step, -step, largeStep, -largeStep]) {
+        const newD1 = origParams[0] + delta
+        const newD2 = origParams[1] + delta
+        if (newD1 >= minDist && newD1 <= maxDist && newD2 >= minDist && newD2 <= maxDist) {
+          trace.controlParams[0] = newD1
+          trace.controlParams[1] = newD2
           this.updateTracePoints(i)
           this.updateSingleTraceSample(i)
           const cost = this.computeCostForTrace(i)
           if (cost < bestCost) {
             bestCost = cost
-            bestParams[0] = trace.controlParams[0]
-            bestParams[1] = trace.controlParams[1]
-            bestParams[2] = origParams[2]
+            bestD1 = newD1
+            bestD2 = newD2
           }
-          trace.controlParams[0] = origParams[0]
-          trace.controlParams[1] = origParams[1]
         }
+      }
+      trace.controlParams[0] = origParams[0]
+      trace.controlParams[1] = origParams[1]
 
-        // Try bendSign adjustments
-        for (const bendDelta of bendDeltas) {
-          trace.controlParams[2] = origParams[2] + bendDelta
-          this.updateTracePoints(i)
-          this.updateSingleTraceSample(i)
-          const cost = this.computeCostForTrace(i)
-          if (cost < bestCost) {
-            bestCost = cost
-            bestParams[0] = origParams[0]
-            bestParams[1] = origParams[1]
-            bestParams[2] = trace.controlParams[2]
-          }
-          trace.controlParams[2] = origParams[2]
-        }
-
-        // Apply best found parameters
-        trace.controlParams = bestParams
+      // Try bendSign with multiple deltas
+      for (const bendDelta of [0.3, -0.3, 0.6, -0.6]) {
+        trace.controlParams[2] = origParams[2] + bendDelta
         this.updateTracePoints(i)
         this.updateSingleTraceSample(i)
-
-        if (bestCost < currentCost * 0.9) break
+        const cost = this.computeCostForTrace(i)
+        if (cost < bestCost) {
+          bestCost = cost
+          bestBend = trace.controlParams[2]
+          bestD1 = origParams[0]
+          bestD2 = origParams[1]
+        }
       }
+
+      // Apply best found parameters
+      trace.controlParams[0] = bestD1
+      trace.controlParams[1] = bestD2
+      trace.controlParams[2] = bestBend
+      this.updateTracePoints(i)
+      this.updateSingleTraceSample(i)
     }
 
-    if (this.optimizationStep % 10 === 0) {
+    // Update collision pairs less frequently
+    if (this.optimizationStep % 5 === 0) {
       this.updateCollisionPairs()
     }
   }
@@ -1511,12 +1537,12 @@ export class AngledTraceSolver extends BaseSolver {
         this.optimizationStep = this.maxOptimizationSteps
       } else if (currentCost >= this.lastCost * 0.99) {
         this.stagnantSteps++
-        if (this.stagnantSteps > 10) {
+        if (this.stagnantSteps > 6) {
           const resolved = this.resolveIntersections()
           if (resolved > 0) {
             this.updateCollisionPairs()
             this.stagnantSteps = 0
-          } else if (this.stagnantSteps > 15) {
+          } else if (this.stagnantSteps > 10) {
             this.optimizationStep = this.maxOptimizationSteps
           }
         }
