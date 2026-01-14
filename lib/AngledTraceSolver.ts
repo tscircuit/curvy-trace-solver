@@ -195,14 +195,85 @@ function computeTraceBounds(
 }
 
 /**
+ * Check if a segment is at a valid angle (horizontal, vertical, or 45°)
+ */
+function isValidAngle(p1: Point, p2: Point): boolean {
+  const dx = Math.abs(p2.x - p1.x)
+  const dy = Math.abs(p2.y - p1.y)
+  const eps = 1e-6
+
+  // Horizontal: dy ≈ 0
+  if (dy < eps) return true
+  // Vertical: dx ≈ 0
+  if (dx < eps) return true
+  // 45°: |dx| ≈ |dy|
+  if (Math.abs(dx - dy) < eps) return true
+
+  return false
+}
+
+/**
+ * Snap a point so that the segment from prev to this point is at a valid 45° angle.
+ * Keeps the general direction but adjusts to nearest valid angle.
+ */
+function snapToValid45(prev: Point, target: Point): Point {
+  const dx = target.x - prev.x
+  const dy = target.y - prev.y
+
+  const absDx = Math.abs(dx)
+  const absDy = Math.abs(dy)
+
+  // If already valid, return as-is
+  if (absDy < 1e-6 || absDx < 1e-6 || Math.abs(absDx - absDy) < 1e-6) {
+    return target
+  }
+
+  // Snap to nearest valid angle
+  // Option 1: Make it horizontal (keep x, snap y)
+  // Option 2: Make it vertical (keep y, snap x)
+  // Option 3: Make it 45° (adjust to equal dx/dy)
+
+  // Choose the option that's closest to the original target
+  const horizontal: Point = { x: target.x, y: prev.y }
+  const vertical: Point = { x: prev.x, y: target.y }
+
+  // For 45°, we can either extend dx to match dy, or extend dy to match dx
+  const diag45_extendX: Point = {
+    x: prev.x + Math.sign(dx) * absDy,
+    y: target.y,
+  }
+  const diag45_extendY: Point = {
+    x: target.x,
+    y: prev.y + Math.sign(dy) * absDx,
+  }
+
+  // Find which is closest to target
+  const options = [horizontal, vertical, diag45_extendX, diag45_extendY]
+  let best = target
+  let bestDist = Infinity
+
+  for (const opt of options) {
+    const dist = Math.hypot(opt.x - target.x, opt.y - target.y)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = opt
+    }
+  }
+
+  return best
+}
+
+/**
  * Compute the 45-degree angled trace points from control parameters.
- * The trace goes:
- * 1. From start, perpendicular to boundary for distance d1 -> Turn1
- * 2. From Turn1, at 45 degrees toward the direction needed -> Midpoint(s)
- * 3. From last midpoint to Turn2, which is d2 away from end along perpDir2
- * 4. From Turn2 to end
+ * All segments are strictly horizontal, vertical, or 45-degree diagonal.
  *
- * bendSign determines which 45-degree direction to prefer.
+ * The trace structure is:
+ * start -> turn1 -> [mid] -> turn2 -> end
+ *
+ * Where:
+ * - start to turn1: perpendicular to start boundary (horizontal or vertical)
+ * - turn1 to turn2: decomposed into 45° diagonal + orthogonal
+ * - turn2 to end: perpendicular to end boundary (horizontal or vertical)
  */
 function computeAngledTracePoints(
   start: Point,
@@ -216,101 +287,105 @@ function computeAngledTracePoints(
 ): Point[] {
   const { minX, maxX, minY, maxY } = bounds
 
-  // Turn1: go perpendicular from start for distance d1
-  const turn1: Point = {
-    x: start.x + d1 * perpDir1.x,
-    y: start.y + d1 * perpDir1.y,
+  // For 45° routing, perpendicular directions must be axis-aligned (horizontal or vertical)
+  // Corners would give diagonal perpendiculars, which we snap to the nearest axis
+  const snapToOrthogonal = (dir: Point): Point => {
+    // Snap to nearest horizontal or vertical direction
+    if (Math.abs(dir.x) >= Math.abs(dir.y)) {
+      return { x: Math.sign(dir.x) || 1, y: 0 }
+    } else {
+      return { x: 0, y: Math.sign(dir.y) || 1 }
+    }
   }
 
-  // Turn2: go perpendicular from end for distance d2 (backwards)
+  // Use axis-aligned perpendicular directions
+  const orthoDir1 = snapToOrthogonal(perpDir1)
+  const orthoDir2 = snapToOrthogonal(perpDir2)
+
+  // Constrain d1 and d2 to stay within bounds
+  const maxD1 =
+    orthoDir1.x !== 0
+      ? orthoDir1.x > 0
+        ? maxX - start.x
+        : start.x - minX
+      : orthoDir1.y > 0
+        ? maxY - start.y
+        : start.y - minY
+  const maxD2 =
+    orthoDir2.x !== 0
+      ? orthoDir2.x > 0
+        ? maxX - end.x
+        : end.x - minX
+      : orthoDir2.y > 0
+        ? maxY - end.y
+        : end.y - minY
+
+  const safeD1 = Math.min(d1, Math.max(0, maxD1 - 1))
+  const safeD2 = Math.min(d2, Math.max(0, maxD2 - 1))
+
+  // Turn1: go perpendicular from start
+  const turn1: Point = {
+    x: start.x + safeD1 * orthoDir1.x,
+    y: start.y + safeD1 * orthoDir1.y,
+  }
+
+  // Turn2: go perpendicular from end
   const turn2: Point = {
-    x: end.x + d2 * perpDir2.x,
-    y: end.y + d2 * perpDir2.y,
+    x: end.x + safeD2 * orthoDir2.x,
+    y: end.y + safeD2 * orthoDir2.y,
   }
 
   // Vector from turn1 to turn2
   const dx = turn2.x - turn1.x
   const dy = turn2.y - turn1.y
 
-  // If turn1 and turn2 are very close, just return a simple path
-  if (Math.hypot(dx, dy) < 1e-6) {
-    return [start, turn1, turn2, end]
+  // If turn1 and turn2 are the same, just return simple path
+  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+    return [start, turn1, end]
   }
 
-  // For 45-degree routing, we need to decompose the movement into
-  // diagonal (45°) and orthogonal (horizontal or vertical) segments.
-  // The bendSign determines whether we go diagonal-first or orthogonal-first.
-
-  // Compute the 45-degree diagonal component
-  // A 45-degree line has |dx| = |dy|
+  // Decompose into diagonal (45°) and orthogonal components
   const absDx = Math.abs(dx)
   const absDy = Math.abs(dy)
 
-  // Determine the diagonal length (minimum of |dx| and |dy| for a true 45°)
-  const diagLen = Math.min(absDx, absDy)
+  // Diagonal travels equal distance in x and y
+  const diagDist = Math.min(absDx, absDy)
+  const diagX = Math.sign(dx) * diagDist
+  const diagY = Math.sign(dy) * diagDist
 
-  // Diagonal direction (normalized to 45 degrees)
-  const diagDirX = Math.sign(dx) * Math.SQRT1_2
-  const diagDirY = Math.sign(dy) * Math.SQRT1_2
+  // Orthogonal is whatever remains (purely horizontal or purely vertical)
+  const orthoX = dx - diagX
+  const orthoY = dy - diagY
 
-  // Orthogonal direction (the remaining movement after diagonal)
-  let orthoX = 0
-  let orthoY = 0
-  if (absDx > absDy) {
-    // More horizontal movement needed
-    orthoX = dx - Math.sign(dx) * diagLen
-  } else {
-    // More vertical movement needed
-    orthoY = dy - Math.sign(dy) * diagLen
-  }
+  // Build the path
+  const points: Point[] = [start, turn1]
 
-  // bendSign > 0: diagonal first, then orthogonal
-  // bendSign < 0: orthogonal first, then diagonal
-  // bendSign = 0: blend (we'll default to diagonal first)
+  const hasDiagonal = diagDist > 1e-6
+  const hasOrthogonal = Math.abs(orthoX) > 1e-6 || Math.abs(orthoY) > 1e-6
 
-  const normalizedBend = Math.tanh(bendSign) // Normalize to [-1, 1]
+  if (hasDiagonal && hasOrthogonal) {
+    // Need an intermediate point
+    const normalizedBend = Math.tanh(bendSign)
 
-  let mid1: Point
-  let mid2: Point | null = null
-
-  if (normalizedBend >= 0) {
-    // Diagonal first, then orthogonal
-    mid1 = {
-      x: turn1.x + diagDirX * diagLen * Math.SQRT2,
-      y: turn1.y + diagDirY * diagLen * Math.SQRT2,
-    }
-    // If there's orthogonal movement needed, add another point
-    if (Math.abs(orthoX) > 1e-6 || Math.abs(orthoY) > 1e-6) {
-      mid2 = {
-        x: mid1.x + orthoX,
-        y: mid1.y + orthoY,
+    if (normalizedBend >= 0) {
+      // Diagonal first, then orthogonal
+      const mid: Point = {
+        x: turn1.x + diagX,
+        y: turn1.y + diagY,
       }
-    }
-  } else {
-    // Orthogonal first, then diagonal
-    mid1 = {
-      x: turn1.x + orthoX,
-      y: turn1.y + orthoY,
-    }
-    // Then diagonal
-    if (diagLen > 1e-6) {
-      mid2 = {
-        x: mid1.x + diagDirX * diagLen * Math.SQRT2,
-        y: mid1.y + diagDirY * diagLen * Math.SQRT2,
+      points.push(mid)
+    } else {
+      // Orthogonal first, then diagonal
+      const mid: Point = {
+        x: turn1.x + orthoX,
+        y: turn1.y + orthoY,
       }
+      points.push(mid)
     }
   }
+  // If only diagonal or only orthogonal, no intermediate point needed
 
-  // Clamp all points to bounds
-  const clamp = (p: Point): Point => ({
-    x: Math.max(minX, Math.min(maxX, p.x)),
-    y: Math.max(minY, Math.min(maxY, p.y)),
-  })
-
-  const points = [start, clamp(turn1)]
-  if (mid1) points.push(clamp(mid1))
-  if (mid2) points.push(clamp(mid2))
-  points.push(clamp(turn2), end)
+  points.push(turn2, end)
 
   // Remove duplicate consecutive points
   const filtered: Point[] = [points[0]]
@@ -1156,9 +1231,11 @@ export class AngledTraceSolver extends BaseSolver {
   }
 
   private buildOutputTraces() {
+    // For angled traces, use the original points directly to preserve 45° angles
+    // (don't use samplePolyline which would create intermediate points at invalid angles)
     this.outputTraces = this.traces.map((trace) => ({
       waypointPair: trace.waypointPair,
-      points: samplePolyline(trace.points, OUTPUT_SAMPLES),
+      points: [...trace.points], // Copy the original points
       networkId: trace.networkId,
     }))
   }
