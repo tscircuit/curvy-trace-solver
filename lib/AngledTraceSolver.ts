@@ -264,6 +264,18 @@ function snapToValid45(prev: Point, target: Point): Point {
 }
 
 /**
+ * Compute dot product of two direction vectors
+ */
+function getDotProduct(
+  dir1x: number,
+  dir1y: number,
+  dir2x: number,
+  dir2y: number,
+): number {
+  return dir1x * dir2x + dir1y * dir2y
+}
+
+/**
  * Compute the 45-degree angled trace points from control parameters.
  * All segments are strictly horizontal, vertical, or 45-degree diagonal.
  *
@@ -286,6 +298,7 @@ function computeAngledTracePoints(
   bounds: Bounds,
 ): Point[] {
   const { minX, maxX, minY, maxY } = bounds
+  const eps = 1e-6
 
   // For 45° routing, perpendicular directions must be axis-aligned (horizontal or vertical)
   // Corners would give diagonal perpendiculars, which we snap to the nearest axis
@@ -340,7 +353,7 @@ function computeAngledTracePoints(
   const dy = turn2.y - turn1.y
 
   // If turn1 and turn2 are the same, just return simple path
-  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+  if (Math.abs(dx) < eps && Math.abs(dy) < eps) {
     return [start, turn1, end]
   }
 
@@ -357,17 +370,72 @@ function computeAngledTracePoints(
   const orthoX = dx - diagX
   const orthoY = dy - diagY
 
+  // Determine the direction we need to go from turn1 to turn2
+  const hasDiagonal = diagDist > eps
+  const hasOrthogonal = Math.abs(orthoX) > eps || Math.abs(orthoY) > eps
+
+  // Check if starting with diagonal or orthogonal would create a 90° turn
+  // orthoDir1 is the direction of segment start->turn1
+  // We want to avoid 90° turns at turn1
+
+  let diagonalFirst = true // Default to diagonal first
+  if (hasDiagonal && hasOrthogonal) {
+    const normalizedBend = Math.tanh(bendSign)
+
+    // Calculate dot products to see which order creates better angles
+    const diagDirX = diagX / diagDist
+    const diagDirY = diagY / diagDist
+
+    const orthoLen = Math.hypot(orthoX, orthoY)
+    const orthoDirX = orthoX / orthoLen
+    const orthoDirY = orthoY / orthoLen
+
+    // Dot with orthoDir1 (direction into turn1)
+    const dotDiag1 = getDotProduct(orthoDir1.x, orthoDir1.y, diagDirX, diagDirY)
+    const dotOrtho1 = getDotProduct(
+      orthoDir1.x,
+      orthoDir1.y,
+      orthoDirX,
+      orthoDirY,
+    )
+
+    // Dot with -orthoDir2 (direction into turn2)
+    const dotDiag2 = getDotProduct(
+      -orthoDir2.x,
+      -orthoDir2.y,
+      diagDirX,
+      diagDirY,
+    )
+    const dotOrtho2 = getDotProduct(
+      -orthoDir2.x,
+      -orthoDir2.y,
+      orthoDirX,
+      orthoDirY,
+    )
+
+    // Score each option (higher is better - means smaller turns)
+    // Diagonal first: turn1 angle uses diagonal, turn2 angle uses orthogonal
+    const scoreDiagFirst = Math.min(dotDiag1, dotOrtho2)
+    // Orthogonal first: turn1 angle uses orthogonal, turn2 angle uses diagonal
+    const scoreOrthoFirst = Math.min(dotOrtho1, dotDiag2)
+
+    // Prefer the option with better (larger) minimum angle
+    // But also factor in bendSign preference
+    if (scoreOrthoFirst > scoreDiagFirst + 0.3) {
+      diagonalFirst = false
+    } else if (scoreDiagFirst > scoreOrthoFirst + 0.3) {
+      diagonalFirst = true
+    } else {
+      // Scores are similar, use bendSign
+      diagonalFirst = normalizedBend >= 0
+    }
+  }
+
   // Build the path
   const points: Point[] = [start, turn1]
 
-  const hasDiagonal = diagDist > 1e-6
-  const hasOrthogonal = Math.abs(orthoX) > 1e-6 || Math.abs(orthoY) > 1e-6
-
   if (hasDiagonal && hasOrthogonal) {
-    // Need an intermediate point
-    const normalizedBend = Math.tanh(bendSign)
-
-    if (normalizedBend >= 0) {
+    if (diagonalFirst) {
       // Diagonal first, then orthogonal
       const mid: Point = {
         x: turn1.x + diagX,
@@ -388,16 +456,88 @@ function computeAngledTracePoints(
   points.push(turn2, end)
 
   // Remove duplicate consecutive points
-  const filtered: Point[] = [points[0]]
+  let filtered: Point[] = [points[0]]
   for (let i = 1; i < points.length; i++) {
     const prev = filtered[filtered.length - 1]
     const curr = points[i]
-    if (Math.hypot(curr.x - prev.x, curr.y - prev.y) > 1e-6) {
+    if (Math.hypot(curr.x - prev.x, curr.y - prev.y) > eps) {
       filtered.push(curr)
     }
   }
 
+  // Chamfer sharp corners (90° or sharper) by inserting diagonal segments
+  filtered = chamferSharpCorners(filtered)
+
   return filtered
+}
+
+/**
+ * Insert chamfer points at sharp corners to convert 90° turns into two 45° turns.
+ * For a corner A -> B -> C with a 90° turn at B, we replace it with:
+ * A -> B1 -> B2 -> C where B1 and B2 create two 45° turns.
+ */
+function chamferSharpCorners(points: Point[]): Point[] {
+  if (points.length < 3) return points
+
+  const eps = 1e-6
+  const result: Point[] = [points[0]]
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const before = points[i - 1]
+    const corner = points[i]
+    const after = points[i + 1]
+
+    // Calculate directions
+    const dx1 = corner.x - before.x
+    const dy1 = corner.y - before.y
+    const len1 = Math.hypot(dx1, dy1)
+
+    const dx2 = after.x - corner.x
+    const dy2 = after.y - corner.y
+    const len2 = Math.hypot(dx2, dy2)
+
+    if (len1 < eps || len2 < eps) {
+      result.push(corner)
+      continue
+    }
+
+    // Normalized directions
+    const dir1x = dx1 / len1
+    const dir1y = dy1 / len1
+    const dir2x = dx2 / len2
+    const dir2y = dy2 / len2
+
+    // Check if this is a sharp turn (dot < 0.5 means >= 60° turn)
+    const dot = getDotProduct(dir1x, dir1y, dir2x, dir2y)
+
+    if (dot >= 0.5) {
+      // Not a sharp turn, keep the corner as-is
+      result.push(corner)
+      continue
+    }
+
+    // Sharp turn detected - insert a diagonal chamfer
+    // The chamfer distance should be proportional to the shorter segment
+    const chamferDist = Math.min(len1, len2) * 0.4
+
+    // Create chamfer points:
+    // B1 is before the corner (along the incoming segment)
+    // B2 is after the corner (along the outgoing segment)
+    const b1: Point = {
+      x: corner.x - dir1x * chamferDist,
+      y: corner.y - dir1y * chamferDist,
+    }
+    const b2: Point = {
+      x: corner.x + dir2x * chamferDist,
+      y: corner.y + dir2y * chamferDist,
+    }
+
+    // Add chamfer points
+    result.push(b1, b2)
+  }
+
+  result.push(points[points.length - 1])
+  return result
 }
 
 /**
@@ -800,6 +940,11 @@ export class AngledTraceSolver extends BaseSolver {
       }
     }
 
+    // Add shape penalties for all traces
+    for (let i = 0; i < this.traces.length; i++) {
+      cost += this.computeShapePenalty(i)
+    }
+
     return cost
   }
 
@@ -898,7 +1043,100 @@ export class AngledTraceSolver extends BaseSolver {
       }
     }
 
+    // Add shape penalty for this trace
+    cost += this.computeShapePenalty(traceIdx)
+
     return cost
+  }
+
+  /**
+   * Compute penalty for undesirable trace shapes:
+   * - Sharp turns (90 degrees or more)
+   * - 45 degree segments shorter than 5% of trace length
+   *
+   * For 45-degree routing, valid turn angles are:
+   * - 0° (straight): dot product = 1
+   * - 45° (to/from diagonal): dot product ≈ 0.707
+   *
+   * Invalid turns:
+   * - 90° (perpendicular): dot product = 0
+   * - 135° or sharper: dot product < 0
+   */
+  private computeShapePenalty(traceIdx: number): number {
+    const trace = this.traces[traceIdx]
+    const points = trace.points
+    if (points.length < 2) return 0
+
+    let penalty = 0
+    const eps = 1e-6
+
+    // Compute total trace length
+    let totalLength = 0
+    for (let i = 0; i < points.length - 1; i++) {
+      totalLength += Math.hypot(
+        points[i + 1].x - points[i].x,
+        points[i + 1].y - points[i].y,
+      )
+    }
+
+    if (totalLength < eps) return 0
+
+    const minSegmentLength = totalLength * 0.05 // 5% of trace length
+
+    // Check each segment and turn
+    for (let i = 0; i < points.length - 1; i++) {
+      const dx = points[i + 1].x - points[i].x
+      const dy = points[i + 1].y - points[i].y
+      const segLength = Math.hypot(dx, dy)
+
+      if (segLength < eps) continue
+
+      // Check if this is a 45 degree segment (|dx| ≈ |dy|)
+      const absDx = Math.abs(dx)
+      const absDy = Math.abs(dy)
+      const is45Degree = Math.abs(absDx - absDy) < eps * segLength
+
+      // Penalize short 45 degree segments
+      if (is45Degree && segLength < minSegmentLength) {
+        // Penalty proportional to how short the segment is
+        const shortness = (minSegmentLength - segLength) / minSegmentLength
+        penalty += shortness * shortness * 100
+      }
+
+      // Check for sharp turns (need at least 3 points)
+      if (i < points.length - 2) {
+        const dx2 = points[i + 2].x - points[i + 1].x
+        const dy2 = points[i + 2].y - points[i + 1].y
+        const seg2Length = Math.hypot(dx2, dy2)
+
+        if (seg2Length > eps) {
+          // Normalize direction vectors
+          const dir1x = dx / segLength
+          const dir1y = dy / segLength
+          const dir2x = dx2 / seg2Length
+          const dir2y = dy2 / seg2Length
+
+          // Dot product: cos(angle between directions)
+          // dot = 1: straight (0° turn)
+          // dot ≈ 0.707: 45° turn (valid for 45° routing)
+          // dot = 0: 90° turn (bad)
+          // dot < 0: > 90° turn (very bad)
+          const dot = dir1x * dir2x + dir1y * dir2y
+
+          // For 45° routing, valid turns have dot ≈ 0.707 or dot = 1
+          // Penalize any turn sharper than ~50° (dot < 0.6)
+          if (dot < 0.6) {
+            // 90° turn (dot ≈ 0): penalty = 100
+            // 135° turn (dot ≈ -0.707): penalty = 170
+            // 180° turn (dot = -1): penalty = 200
+            const sharpness = 1 - dot // 0.4 for barely bad, 2.0 for U-turn
+            penalty += sharpness * 100
+          }
+        }
+      }
+    }
+
+    return penalty
   }
 
   private tracesIntersect(i: number, j: number): boolean {

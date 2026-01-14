@@ -2,7 +2,7 @@ import { AngledTraceSolver } from "../../lib/AngledTraceSolver"
 import { generateRandomProblem } from "../../lib/problem-generator"
 import { scoreOutputCost } from "../../lib/scoreOutputCost"
 
-const NUM_PROBLEMS = 25
+const NUM_PROBLEMS = 200
 const MIN_WAYPOINT_PAIRS = 2
 const MAX_WAYPOINT_PAIRS = 12
 const BENCHMARK_SEED = 42
@@ -56,7 +56,11 @@ function runBenchmark() {
     // Run solver until complete (with max iterations to prevent infinite loops)
     const MAX_ITERATIONS = 1000
     let iterations = 0
-    for (iterations = 0; iterations < MAX_ITERATIONS && !solver.solved; iterations++) {
+    for (
+      iterations = 0;
+      iterations < MAX_ITERATIONS && !solver.solved;
+      iterations++
+    ) {
       solver.step()
     }
 
@@ -107,7 +111,8 @@ function runBenchmark() {
 
   // Calculate iteration statistics
   const iterations = results.map((r) => r.iterations)
-  const avgIterations = iterations.reduce((a, b) => a + b, 0) / iterations.length
+  const avgIterations =
+    iterations.reduce((a, b) => a + b, 0) / iterations.length
 
   // Calculate stats by problem size
   const sizeGroups = new Map<number, ProblemResult[]>()
@@ -154,7 +159,8 @@ function runBenchmark() {
   const sortedSizes = [...sizeGroups.keys()].sort((a, b) => a - b)
   for (const size of sortedSizes) {
     const group = sizeGroups.get(size)!
-    const groupAvgTime = group.reduce((a, r) => a + r.solveTimeMs, 0) / group.length
+    const groupAvgTime =
+      group.reduce((a, r) => a + r.solveTimeMs, 0) / group.length
     const groupAvgScore = group.reduce((a, r) => a + r.score, 0) / group.length
     console.log(
       `${String(size).padStart(5)}  ${String(group.length).padStart(5)}  ${groupAvgTime.toFixed(2).padStart(12)}  ${groupAvgScore.toFixed(2).padStart(9)}`,
@@ -164,10 +170,12 @@ function runBenchmark() {
   console.log("=".repeat(60))
 
   // Print summary line suitable for comparison
-  console.log("\n[SUMMARY] AngledTraceSolver: " +
-    `avg_time=${avgTimeMs.toFixed(2)}ms, ` +
-    `avg_score=${averageScore.toFixed(2)}, ` +
-    `p95_score=${p95WorstScore.toFixed(2)}`)
+  console.log(
+    "\n[SUMMARY] AngledTraceSolver: " +
+      `avg_time=${avgTimeMs.toFixed(2)}ms, ` +
+      `avg_score=${averageScore.toFixed(2)}, ` +
+      `p95_score=${p95WorstScore.toFixed(2)}`,
+  )
 }
 
 runBenchmark()
