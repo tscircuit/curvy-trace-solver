@@ -325,6 +325,52 @@ function getDotProduct(
 }
 
 /**
+ * Compute a direct 45-degree route from start to end.
+ * This route stays as close as possible to the straight line path,
+ * decomposing into valid 45° segments with minimal deviation.
+ *
+ * @param diagonalFirst - if true, do diagonal segment first; if false, do orthogonal first
+ */
+function computeDirectRoute(start: Point, end: Point, diagonalFirst: boolean = true): Point[] {
+  const eps = 1e-6
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+
+  const absDx = Math.abs(dx)
+  const absDy = Math.abs(dy)
+
+  // If already at a valid angle, go direct
+  if (absDx < eps || absDy < eps || Math.abs(absDx - absDy) < eps) {
+    return [start, end]
+  }
+
+  // Decompose into diagonal + orthogonal
+  const diagDist = Math.min(absDx, absDy)
+  const diagX = Math.sign(dx) * diagDist
+  const diagY = Math.sign(dy) * diagDist
+
+  // The remaining orthogonal component
+  const orthoX = dx - diagX
+  const orthoY = dy - diagY
+
+  if (diagonalFirst) {
+    // Create midpoint - diagonal first
+    const mid: Point = {
+      x: start.x + diagX,
+      y: start.y + diagY,
+    }
+    return [start, mid, end]
+  } else {
+    // Orthogonal first
+    const mid: Point = {
+      x: start.x + orthoX,
+      y: start.y + orthoY,
+    }
+    return [start, mid, end]
+  }
+}
+
+/**
  * Compute the 45-degree angled trace points from control parameters.
  * All segments are strictly horizontal, vertical, or 45-degree diagonal.
  *
@@ -348,6 +394,12 @@ function computeAngledTracePoints(
 ): Point[] {
   const { minX, maxX, minY, maxY } = bounds
   const eps = 1e-6
+
+  // If d1 and d2 are both very small, use direct routing
+  // bendSign controls diagonal-first vs orthogonal-first
+  if (d1 < eps && d2 < eps) {
+    return computeDirectRoute(start, end, bendSign >= 0)
+  }
 
   // For 45° routing, perpendicular directions must be axis-aligned (horizontal or vertical)
   // Corners would give diagonal perpendiculars, which we snap to the nearest axis
@@ -773,42 +825,18 @@ export class AngledTraceSolver extends BaseSolver {
     const nestingDepth = containedBy.map((arr) => arr.length)
     const maxDepth = Math.max(...nestingDepth, 1)
 
+    // Initialize all traces with direct routing (d1=0, d2=0)
+    // This keeps traces as close as possible to their straight-line paths
     this.traces = tracesWithT.map(({ pair, t1, t2, idx }) => {
       const perpDir1 = getInwardPerpendicular(pair.start, bounds)
       const perpDir2 = getInwardPerpendicular(pair.end, bounds)
 
-      // Calculate chord length for initial distance estimation
-      const chordLength = Math.hypot(
-        pair.end.x - pair.start.x,
-        pair.end.y - pair.start.y,
-      )
-
-      const depth = nestingDepth[idx]
-      const normalizedDepth = depth / maxDepth
-
-      // Compute spatial depth
-      const midPoint = {
-        x: (pair.start.x + pair.end.x) / 2,
-        y: (pair.start.y + pair.end.y) / 2,
-      }
-      const distToCenter = Math.hypot(
-        midPoint.x - center.x,
-        midPoint.y - center.y,
-      )
-      const maxDist = Math.hypot(W / 2, H / 2)
-      const spatialDepth = 1 - distToCenter / maxDist
-
-      // Initial perpendicular distances
-      const baseFactor = 0.2 + spatialDepth * 0.1
-      const depthAdjustment = 1 - normalizedDepth * 0.3
-      const initialDist = chordLength * baseFactor * depthAdjustment
-
-      const minDist = Math.min(W, H) * 0.03
-      const d1 = Math.max(minDist, initialDist)
-      const d2 = Math.max(minDist, initialDist)
+      // Start with direct route (no perpendicular offsets)
+      const d1 = 0
+      const d2 = 0
       const bendSign = 0
 
-      // Compute initial points
+      // Compute initial points using direct route
       const points = computeAngledTracePoints(
         pair.start,
         pair.end,
@@ -1286,6 +1314,18 @@ export class AngledTraceSolver extends BaseSolver {
     return penalty
   }
 
+  private getTraceLength(i: number): number {
+    const trace = this.traces[i]
+    let length = 0
+    for (let p = 0; p < trace.points.length - 1; p++) {
+      length += Math.hypot(
+        trace.points[p + 1].x - trace.points[p].x,
+        trace.points[p + 1].y - trace.points[p].y,
+      )
+    }
+    return length
+  }
+
   private tracesIntersect(i: number, j: number): boolean {
     const trace1 = this.traces[i]
     const trace2 = this.traces[j]
@@ -1347,11 +1387,19 @@ export class AngledTraceSolver extends BaseSolver {
     const { bounds, preferredTraceToTraceSpacing } = this.problem
     const { minX, maxX, minY, maxY } = bounds
     const minDim = Math.min(maxX - minX, maxY - minY)
-    const minDist = minDim * 0.02
-    const maxDist = minDim * 1.5
+    const minDist = 0 // Allow zero for direct routing
+    const maxDist = minDim * 2.0 // Allow larger distances for extreme cases
 
     const intersecting = this.findIntersectingPairs()
     if (intersecting.length === 0) return 0
+
+    // Sort intersecting pairs: handle pairs with shorter combined trace length first
+    // (shorter traces are easier to adjust)
+    intersecting.sort((a, b) => {
+      const lenA = this.getTraceLength(a[0]) + this.getTraceLength(a[1])
+      const lenB = this.getTraceLength(b[0]) + this.getTraceLength(b[1])
+      return lenA - lenB
+    })
 
     let resolved = 0
 
@@ -1361,7 +1409,7 @@ export class AngledTraceSolver extends BaseSolver {
 
       if (!this.tracesIntersect(i, j)) continue
 
-      // Determine outer vs inner trace
+      // Determine outer vs inner trace based on containment
       let outerIdx: number
       let innerIdx: number
 
@@ -1372,6 +1420,7 @@ export class AngledTraceSolver extends BaseSolver {
         outerIdx = i
         innerIdx = j
       } else {
+        // Neither contains the other - use average distance as heuristic
         const avgDi = (ti.controlParams[0] + ti.controlParams[1]) / 2
         const avgDj = (tj.controlParams[0] + tj.controlParams[1]) / 2
         if (avgDi < avgDj) {
@@ -1387,35 +1436,112 @@ export class AngledTraceSolver extends BaseSolver {
       const innerTrace = this.traces[innerIdx]
 
       // Save original state
-      const origOuter = [...outerTrace.controlParams] as [
-        number,
-        number,
-        number,
-      ]
-      const origInner = [...innerTrace.controlParams] as [
-        number,
-        number,
-        number,
-      ]
-      const costBefore = this.computeTotalCost()
+      const origOuter = [...outerTrace.controlParams] as [number, number, number]
+      const origInner = [...innerTrace.controlParams] as [number, number, number]
 
       const separation = preferredTraceToTraceSpacing * 2
 
-      const strategies = [
-        { innerMult: 1, outerMult: 0, bendDelta: 0 },
-        { innerMult: 0, outerMult: 1, bendDelta: 0 },
-        { innerMult: 0.5, outerMult: 0.5, bendDelta: 0 },
-        { innerMult: 2, outerMult: 0, bendDelta: 0 },
-        { innerMult: 0, outerMult: 0, bendDelta: 1 }, // Try bending
-        { innerMult: 0, outerMult: 0, bendDelta: -1 },
-        { innerMult: 1, outerMult: 0, bendDelta: 1 },
-        { innerMult: 1, outerMult: 0, bendDelta: -1 },
-        { innerMult: 3, outerMult: 0, bendDelta: 0 },
-        { innerMult: 2, outerMult: 1, bendDelta: 0 },
+      // Much more aggressive strategies - try adjusting each trace
+      // Strategy type: which trace to adjust, how much to offset, and bend direction
+      type Strategy = {
+        target: "inner" | "outer" | "both"
+        innerD: number
+        outerD: number
+        innerBend: number
+        outerBend: number
+      }
+
+      const strategies: Strategy[] = [
+        // FIRST: Small distance adjustments (most common solution)
+        { target: "inner", innerD: separation, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 3, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 3, innerBend: 0, outerBend: 0 },
+        // Bend changes (flip diagonal/orthogonal)
+        { target: "inner", innerD: 0, outerD: 0, innerBend: -1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: -1 },
+        { target: "inner", innerD: 0, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: 1 },
+        // Combined small distance + bend
+        { target: "inner", innerD: separation, outerD: 0, innerBend: -1, outerBend: 0 },
+        { target: "inner", innerD: separation, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: -1 },
+        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: 1 },
+        // Move both traces
+        { target: "both", innerD: separation, outerD: separation, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 2, outerD: separation, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 2, outerD: separation * 2, innerBend: 0, outerBend: 0 },
+        // SECOND: Medium distance adjustments
+        { target: "inner", innerD: separation * 4, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 5, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 4, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 5, innerBend: 0, outerBend: 0 },
+        // More bend variations
+        { target: "inner", innerD: 0, outerD: 0, innerBend: 2, outerBend: 0 },
+        { target: "inner", innerD: 0, outerD: 0, innerBend: -2, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: 2 },
+        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: -2 },
+        { target: "both", innerD: 0, outerD: 0, innerBend: 1, outerBend: -1 },
+        { target: "both", innerD: 0, outerD: 0, innerBend: -1, outerBend: 1 },
+        // Combined medium distance + bend
+        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: -1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: 1 },
+        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: -1 },
+        { target: "both", innerD: separation * 2, outerD: 0, innerBend: 1, outerBend: -1 },
+        { target: "both", innerD: separation * 2, outerD: 0, innerBend: -1, outerBend: 1 },
+        // THIRD: Large distance adjustments
+        { target: "inner", innerD: separation * 6, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 10, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 6, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 8, innerBend: 0, outerBend: 0 },
+        // Combined large distance + bend
+        { target: "inner", innerD: separation * 4, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "inner", innerD: separation * 4, outerD: 0, innerBend: -1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 3, innerBend: 0, outerBend: 1 },
+        { target: "outer", innerD: 0, outerD: separation * 3, innerBend: 0, outerBend: -1 },
+        { target: "both", innerD: separation * 5, outerD: separation * 3, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 8, outerD: separation * 4, innerBend: 0, outerBend: 0 },
+        // FOURTH: Extreme adjustments for stubborn cases
+        { target: "inner", innerD: separation * 12, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 15, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 20, outerD: 0, innerBend: 0, outerBend: 0 },
+        // MOVE OUTER TRACE OUTWARD (increase its d values - pushing it further from edge)
+        { target: "outer", innerD: 0, outerD: -separation, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: -separation * 2, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: -separation * 3, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: -separation * 5, innerBend: 0, outerBend: 0 },
+        // Combined inner and outer moving opposite directions
+        { target: "both", innerD: separation * 3, outerD: -separation * 2, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 5, outerD: -separation * 3, innerBend: 0, outerBend: 0 },
+        // Large bend changes
+        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: 3, outerBend: 0 },
+        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: -3, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 6, innerBend: 0, outerBend: 3 },
+        { target: "outer", innerD: 0, outerD: separation * 6, innerBend: 0, outerBend: -3 },
+        { target: "inner", innerD: separation * 10, outerD: 0, innerBend: 2, outerBend: 0 },
+        { target: "inner", innerD: separation * 10, outerD: 0, innerBend: -2, outerBend: 0 },
+        { target: "both", innerD: separation * 6, outerD: 0, innerBend: 2, outerBend: -2 },
+        { target: "both", innerD: separation * 6, outerD: 0, innerBend: -2, outerBend: 2 },
+        // Extreme values
+        { target: "inner", innerD: separation * 25, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 30, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: -separation * 8, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: -separation * 10, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 10, outerD: separation * 5, innerBend: 2, outerBend: -2 },
+        { target: "both", innerD: separation * 10, outerD: separation * 5, innerBend: -2, outerBend: 2 },
+        { target: "inner", innerD: separation * 15, outerD: 0, innerBend: 2, outerBend: 0 },
+        { target: "inner", innerD: separation * 15, outerD: 0, innerBend: -2, outerBend: 0 },
+        { target: "inner", innerD: separation * 20, outerD: 0, innerBend: 2, outerBend: 0 },
+        { target: "inner", innerD: separation * 20, outerD: 0, innerBend: -2, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 10, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 12, innerBend: 0, outerBend: 0 },
       ]
 
-      let bestCost = costBefore
-      let bestStrategy: (typeof strategies)[0] | null = null
+      let foundSolution = false
 
       for (const strategy of strategies) {
         // Reset
@@ -1423,23 +1549,13 @@ export class AngledTraceSolver extends BaseSolver {
         innerTrace.controlParams = [...origInner]
 
         // Apply strategy
-        innerTrace.controlParams[0] = Math.min(
-          maxDist,
-          origInner[0] + separation * strategy.innerMult,
-        )
-        innerTrace.controlParams[1] = Math.min(
-          maxDist,
-          origInner[1] + separation * strategy.innerMult,
-        )
-        outerTrace.controlParams[0] = Math.max(
-          minDist,
-          origOuter[0] - separation * strategy.outerMult,
-        )
-        outerTrace.controlParams[1] = Math.max(
-          minDist,
-          origOuter[1] - separation * strategy.outerMult,
-        )
-        innerTrace.controlParams[2] += strategy.bendDelta
+        innerTrace.controlParams[0] = Math.min(maxDist, origInner[0] + strategy.innerD)
+        innerTrace.controlParams[1] = Math.min(maxDist, origInner[1] + strategy.innerD)
+        innerTrace.controlParams[2] = origInner[2] + strategy.innerBend
+
+        outerTrace.controlParams[0] = Math.max(minDist, origOuter[0] - strategy.outerD)
+        outerTrace.controlParams[1] = Math.max(minDist, origOuter[1] - strategy.outerD)
+        outerTrace.controlParams[2] = origOuter[2] + strategy.outerBend
 
         this.updateTracePoints(innerIdx)
         this.updateTracePoints(outerIdx)
@@ -1447,40 +1563,44 @@ export class AngledTraceSolver extends BaseSolver {
         this.updateSingleTraceSample(outerIdx)
 
         if (!this.tracesIntersect(outerIdx, innerIdx)) {
-          const newCost = this.computeTotalCost()
-          if (bestStrategy === null || newCost < bestCost) {
-            bestCost = newCost
-            bestStrategy = strategy
+          // Found a working solution - keep it
+          resolved++
+          foundSolution = true
+          break
+        }
+      }
+
+      if (!foundSolution) {
+        // Try swapping roles and trying again
+        for (const strategy of strategies) {
+          // Reset
+          outerTrace.controlParams = [...origOuter]
+          innerTrace.controlParams = [...origInner]
+
+          // Apply strategy with swapped roles (outer gets inner's adjustments, vice versa)
+          outerTrace.controlParams[0] = Math.min(maxDist, origOuter[0] + strategy.innerD)
+          outerTrace.controlParams[1] = Math.min(maxDist, origOuter[1] + strategy.innerD)
+          outerTrace.controlParams[2] = origOuter[2] + strategy.innerBend
+
+          innerTrace.controlParams[0] = Math.max(minDist, origInner[0] - strategy.outerD)
+          innerTrace.controlParams[1] = Math.max(minDist, origInner[1] - strategy.outerD)
+          innerTrace.controlParams[2] = origInner[2] + strategy.outerBend
+
+          this.updateTracePoints(innerIdx)
+          this.updateTracePoints(outerIdx)
+          this.updateSingleTraceSample(innerIdx)
+          this.updateSingleTraceSample(outerIdx)
+
+          if (!this.tracesIntersect(outerIdx, innerIdx)) {
+            resolved++
+            foundSolution = true
+            break
           }
         }
       }
 
-      if (bestStrategy) {
-        innerTrace.controlParams[0] = Math.min(
-          maxDist,
-          origInner[0] + separation * bestStrategy.innerMult,
-        )
-        innerTrace.controlParams[1] = Math.min(
-          maxDist,
-          origInner[1] + separation * bestStrategy.innerMult,
-        )
-        outerTrace.controlParams[0] = Math.max(
-          minDist,
-          origOuter[0] - separation * bestStrategy.outerMult,
-        )
-        outerTrace.controlParams[1] = Math.max(
-          minDist,
-          origOuter[1] - separation * bestStrategy.outerMult,
-        )
-        innerTrace.controlParams[2] = origInner[2] + bestStrategy.bendDelta
-
-        this.updateTracePoints(innerIdx)
-        this.updateTracePoints(outerIdx)
-        this.updateSingleTraceSample(innerIdx)
-        this.updateSingleTraceSample(outerIdx)
-        resolved++
-      } else {
-        // Revert
+      if (!foundSolution) {
+        // Revert to original if nothing worked
         outerTrace.controlParams = origOuter
         innerTrace.controlParams = origInner
         this.updateTracePoints(outerIdx)
@@ -1501,7 +1621,8 @@ export class AngledTraceSolver extends BaseSolver {
     const progress = this.optimizationStep / this.maxOptimizationSteps
     const step = 3.0 * (1 - progress) + 0.5
 
-    const minDist = minDim * 0.02
+    // Allow d1/d2 to go to 0 for direct routing
+    const minDist = 0
     const maxDist = minDim * 1.5
 
     // Process only traces with non-zero cost
@@ -1624,6 +1745,16 @@ export class AngledTraceSolver extends BaseSolver {
       this.effectiveTraceToTraceSpacing =
         this.problem.preferredTraceToTraceSpacing * 3
       this.initializeTraces()
+
+      // Immediately resolve any intersections from direct routing
+      // This is critical since direct routes may cross
+      for (let pass = 0; pass < 50; pass++) {
+        const resolved = this.resolveIntersections()
+        if (resolved === 0) break
+        this.updateAllSampledTraces()
+        this.updateCollisionPairs()
+      }
+
       this.lastCost = this.computeTotalCost()
       this.stagnantSteps = 0
     }
@@ -1668,7 +1799,8 @@ export class AngledTraceSolver extends BaseSolver {
       // Final pass: update samples and resolve any remaining intersections
       this.updateAllSampledTraces()
       this.updateCollisionPairs()
-      for (let i = 0; i < 5; i++) {
+      // Do up to 50 passes to ensure all intersections are resolved
+      for (let i = 0; i < 50; i++) {
         const resolved = this.resolveIntersections()
         if (resolved === 0) break
         this.updateAllSampledTraces()
