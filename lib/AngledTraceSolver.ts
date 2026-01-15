@@ -696,7 +696,7 @@ export class AngledTraceSolver extends BaseSolver {
   outputTraces: OutputTrace[] = []
   private traces: AngledTraceWithControlPoints[] = []
   private optimizationStep = 0
-  private readonly maxOptimizationSteps = 300 // Match original for quality
+  private readonly maxOptimizationSteps = 60 // Reduced for speed - early termination handles convergence
 
   // Sampled points for cost computation
   private sampledPoints: Float64Array[] = []
@@ -1441,8 +1441,7 @@ export class AngledTraceSolver extends BaseSolver {
 
       const separation = preferredTraceToTraceSpacing * 2
 
-      // Much more aggressive strategies - try adjusting each trace
-      // Strategy type: which trace to adjust, how much to offset, and bend direction
+      // Balanced strategies - effective ones for intersection resolution
       type Strategy = {
         target: "inner" | "outer" | "both"
         innerD: number
@@ -1452,93 +1451,44 @@ export class AngledTraceSolver extends BaseSolver {
       }
 
       const strategies: Strategy[] = [
-        // FIRST: Small distance adjustments (most common solution)
+        // Distance adjustments (most common solutions)
         { target: "inner", innerD: separation, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: 0 },
         { target: "inner", innerD: separation * 2, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: 0 },
         { target: "inner", innerD: separation * 3, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 3, innerBend: 0, outerBend: 0 },
-        // Bend changes (flip diagonal/orthogonal)
+        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: 0 },
+        // Bend changes
         { target: "inner", innerD: 0, outerD: 0, innerBend: -1, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: -1 },
         { target: "inner", innerD: 0, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: -1 },
         { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: 1 },
-        // Combined small distance + bend
-        { target: "inner", innerD: separation, outerD: 0, innerBend: -1, outerBend: 0 },
-        { target: "inner", innerD: separation, outerD: 0, innerBend: 1, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: -1 },
-        { target: "outer", innerD: 0, outerD: separation, innerBend: 0, outerBend: 1 },
-        // Move both traces
-        { target: "both", innerD: separation, outerD: separation, innerBend: 0, outerBend: 0 },
-        { target: "both", innerD: separation * 2, outerD: separation, innerBend: 0, outerBend: 0 },
-        { target: "both", innerD: separation * 2, outerD: separation * 2, innerBend: 0, outerBend: 0 },
-        // SECOND: Medium distance adjustments
-        { target: "inner", innerD: separation * 4, outerD: 0, innerBend: 0, outerBend: 0 },
+        // Medium distance
         { target: "inner", innerD: separation * 5, outerD: 0, innerBend: 0, outerBend: 0 },
+        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: 0, outerBend: 0 },
         { target: "outer", innerD: 0, outerD: separation * 4, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 5, innerBend: 0, outerBend: 0 },
-        // More bend variations
-        { target: "inner", innerD: 0, outerD: 0, innerBend: 2, outerBend: 0 },
-        { target: "inner", innerD: 0, outerD: 0, innerBend: -2, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: 2 },
-        { target: "outer", innerD: 0, outerD: 0, innerBend: 0, outerBend: -2 },
+        // Combined distance + bend
+        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: -1, outerBend: 0 },
+        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: -1 },
+        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: 1 },
+        // Move both traces
+        { target: "both", innerD: separation * 2, outerD: separation, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 3, outerD: separation * 2, innerBend: 0, outerBend: 0 },
         { target: "both", innerD: 0, outerD: 0, innerBend: 1, outerBend: -1 },
         { target: "both", innerD: 0, outerD: 0, innerBend: -1, outerBend: 1 },
-        // Combined medium distance + bend
-        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: 1, outerBend: 0 },
-        { target: "inner", innerD: separation * 2, outerD: 0, innerBend: -1, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: 1 },
-        { target: "outer", innerD: 0, outerD: separation * 2, innerBend: 0, outerBend: -1 },
-        { target: "both", innerD: separation * 2, outerD: 0, innerBend: 1, outerBend: -1 },
-        { target: "both", innerD: separation * 2, outerD: 0, innerBend: -1, outerBend: 1 },
-        // THIRD: Large distance adjustments
-        { target: "inner", innerD: separation * 6, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "inner", innerD: separation * 10, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 6, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 8, innerBend: 0, outerBend: 0 },
-        // Combined large distance + bend
-        { target: "inner", innerD: separation * 4, outerD: 0, innerBend: 1, outerBend: 0 },
-        { target: "inner", innerD: separation * 4, outerD: 0, innerBend: -1, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 3, innerBend: 0, outerBend: 1 },
-        { target: "outer", innerD: 0, outerD: separation * 3, innerBend: 0, outerBend: -1 },
-        { target: "both", innerD: separation * 5, outerD: separation * 3, innerBend: 0, outerBend: 0 },
-        { target: "both", innerD: separation * 8, outerD: separation * 4, innerBend: 0, outerBend: 0 },
-        // FOURTH: Extreme adjustments for stubborn cases
+        // Large distance for stubborn cases
         { target: "inner", innerD: separation * 12, outerD: 0, innerBend: 0, outerBend: 0 },
         { target: "inner", innerD: separation * 15, outerD: 0, innerBend: 0, outerBend: 0 },
         { target: "inner", innerD: separation * 20, outerD: 0, innerBend: 0, outerBend: 0 },
-        // MOVE OUTER TRACE OUTWARD (increase its d values - pushing it further from edge)
-        { target: "outer", innerD: 0, outerD: -separation, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: -separation * 2, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: -separation * 3, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: -separation * 5, innerBend: 0, outerBend: 0 },
-        // Combined inner and outer moving opposite directions
-        { target: "both", innerD: separation * 3, outerD: -separation * 2, innerBend: 0, outerBend: 0 },
-        { target: "both", innerD: separation * 5, outerD: -separation * 3, innerBend: 0, outerBend: 0 },
-        // Large bend changes
-        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: 3, outerBend: 0 },
-        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: -3, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 6, innerBend: 0, outerBend: 3 },
-        { target: "outer", innerD: 0, outerD: separation * 6, innerBend: 0, outerBend: -3 },
-        { target: "inner", innerD: separation * 10, outerD: 0, innerBend: 2, outerBend: 0 },
-        { target: "inner", innerD: separation * 10, outerD: 0, innerBend: -2, outerBend: 0 },
-        { target: "both", innerD: separation * 6, outerD: 0, innerBend: 2, outerBend: -2 },
-        { target: "both", innerD: separation * 6, outerD: 0, innerBend: -2, outerBend: 2 },
-        // Extreme values
         { target: "inner", innerD: separation * 25, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "inner", innerD: separation * 30, outerD: 0, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: -separation * 8, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: -separation * 10, innerBend: 0, outerBend: 0 },
-        { target: "both", innerD: separation * 10, outerD: separation * 5, innerBend: 2, outerBend: -2 },
-        { target: "both", innerD: separation * 10, outerD: separation * 5, innerBend: -2, outerBend: 2 },
-        { target: "inner", innerD: separation * 15, outerD: 0, innerBend: 2, outerBend: 0 },
-        { target: "inner", innerD: separation * 15, outerD: 0, innerBend: -2, outerBend: 0 },
-        { target: "inner", innerD: separation * 20, outerD: 0, innerBend: 2, outerBend: 0 },
-        { target: "inner", innerD: separation * 20, outerD: 0, innerBend: -2, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 10, innerBend: 0, outerBend: 0 },
-        { target: "outer", innerD: 0, outerD: separation * 12, innerBend: 0, outerBend: 0 },
+        // Combined large distance + bend
+        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: 2, outerBend: 0 },
+        { target: "inner", innerD: separation * 8, outerD: 0, innerBend: -2, outerBend: 0 },
+        { target: "inner", innerD: separation * 12, outerD: 0, innerBend: 1, outerBend: 0 },
+        { target: "inner", innerD: separation * 12, outerD: 0, innerBend: -1, outerBend: 0 },
+        // Push outer trace
+        { target: "both", innerD: separation * 5, outerD: -separation * 2, innerBend: 0, outerBend: 0 },
+        { target: "both", innerD: separation * 8, outerD: -separation * 3, innerBend: 0, outerBend: 0 },
       ]
 
       let foundSolution = false
@@ -1571,20 +1521,26 @@ export class AngledTraceSolver extends BaseSolver {
       }
 
       if (!foundSolution) {
-        // Try swapping roles and trying again
-        for (const strategy of strategies) {
-          // Reset
+        // Try swapping roles with more strategies
+        const swapStrategies = [
+          { innerD: separation * 2, innerBend: 0 },
+          { innerD: separation * 5, innerBend: 0 },
+          { innerD: separation * 8, innerBend: 0 },
+          { innerD: separation * 12, innerBend: 0 },
+          { innerD: separation * 15, innerBend: 0 },
+          { innerD: 0, innerBend: -1 },
+          { innerD: 0, innerBend: 1 },
+          { innerD: separation * 5, innerBend: -1 },
+          { innerD: separation * 5, innerBend: 1 },
+          { innerD: separation * 10, innerBend: -1 },
+        ]
+        for (const strategy of swapStrategies) {
           outerTrace.controlParams = [...origOuter]
           innerTrace.controlParams = [...origInner]
 
-          // Apply strategy with swapped roles (outer gets inner's adjustments, vice versa)
           outerTrace.controlParams[0] = Math.min(maxDist, origOuter[0] + strategy.innerD)
           outerTrace.controlParams[1] = Math.min(maxDist, origOuter[1] + strategy.innerD)
           outerTrace.controlParams[2] = origOuter[2] + strategy.innerBend
-
-          innerTrace.controlParams[0] = Math.max(minDist, origInner[0] - strategy.outerD)
-          innerTrace.controlParams[1] = Math.max(minDist, origInner[1] - strategy.outerD)
-          innerTrace.controlParams[2] = origInner[2] + strategy.outerBend
 
           this.updateTracePoints(innerIdx)
           this.updateTracePoints(outerIdx)
@@ -1747,8 +1703,7 @@ export class AngledTraceSolver extends BaseSolver {
       this.initializeTraces()
 
       // Immediately resolve any intersections from direct routing
-      // This is critical since direct routes may cross
-      for (let pass = 0; pass < 50; pass++) {
+      for (let pass = 0; pass < 20; pass++) {
         const resolved = this.resolveIntersections()
         if (resolved === 0) break
         this.updateAllSampledTraces()
@@ -1757,6 +1712,11 @@ export class AngledTraceSolver extends BaseSolver {
 
       this.lastCost = this.computeTotalCost()
       this.stagnantSteps = 0
+
+      // Fast path: if no collisions after initial resolution, skip optimization
+      if (this.lastCost === 0 && this.findIntersectingPairs().length === 0) {
+        this.optimizationStep = this.maxOptimizationSteps
+      }
     }
 
     if (this.optimizationStep < this.maxOptimizationSteps) {
@@ -1770,8 +1730,8 @@ export class AngledTraceSolver extends BaseSolver {
       this.optimizeStep()
       this.optimizationStep++
 
-      // Resolve intersections every 5 steps
-      if (this.optimizationStep % 5 === 0) {
+      // Resolve intersections every 10 steps (was 5)
+      if (this.optimizationStep % 10 === 0) {
         const resolved = this.resolveIntersections()
         if (resolved > 0) {
           this.updateCollisionPairs()
@@ -1779,14 +1739,17 @@ export class AngledTraceSolver extends BaseSolver {
       }
 
       const currentCost = this.computeTotalCost()
-      if (currentCost >= this.lastCost * 0.995) {
+
+      // Aggressive early termination when cost is very low
+      if (currentCost < 1 && this.findIntersectingPairs().length === 0) {
+        this.optimizationStep = this.maxOptimizationSteps
+      } else if (currentCost >= this.lastCost * 0.99) {
         this.stagnantSteps++
-        if (this.stagnantSteps > 8) {
-          // Try to resolve any remaining intersections before giving up
+        if (this.stagnantSteps > 5) {
           this.resolveIntersections()
           this.stagnantSteps = 0
         }
-        if (this.stagnantSteps > 12) {
+        if (this.stagnantSteps > 8) {
           this.optimizationStep = this.maxOptimizationSteps
         }
       } else {
@@ -1799,8 +1762,7 @@ export class AngledTraceSolver extends BaseSolver {
       // Final pass: update samples and resolve any remaining intersections
       this.updateAllSampledTraces()
       this.updateCollisionPairs()
-      // Do up to 50 passes to ensure all intersections are resolved
-      for (let i = 0; i < 50; i++) {
+      for (let i = 0; i < 30; i++) {
         const resolved = this.resolveIntersections()
         if (resolved === 0) break
         this.updateAllSampledTraces()
