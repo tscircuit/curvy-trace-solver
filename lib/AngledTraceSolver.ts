@@ -118,10 +118,10 @@ function segmentDistSq(
   const d1 = bDx * (a1y - b1y) - bDy * (a1x - b1x)
   const d2 = bDx * (a2y - b1y) - bDy * (a2x - b1x)
 
-  if ((d1 > 0) !== (d2 > 0)) {
+  if (d1 > 0 !== d2 > 0) {
     const d3 = aDx * (b1y - a1y) - aDy * (b1x - a1x)
     const d4 = aDx * (b2y - a1y) - aDy * (b2x - a1x)
-    if ((d3 > 0) !== (d4 > 0)) {
+    if (d3 > 0 !== d4 > 0) {
       return 0 // Segments intersect
     }
   }
@@ -224,9 +224,12 @@ function segmentsIntersect(
 }
 
 // Compute bounding box for trace points
-function computeTraceBounds(
-  points: Point[],
-): { minX: number; maxX: number; minY: number; maxY: number } {
+function computeTraceBounds(points: Point[]): {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+} {
   let minX = Infinity,
     maxX = -Infinity,
     minY = Infinity,
@@ -615,8 +618,7 @@ function samplePolyline(points: Point[], numSamples: number): Point[] {
     for (let i = 0; i < segmentLengths.length; i++) {
       if (accumulated + segmentLengths[i] >= targetDist - 1e-9) {
         const segDist = targetDist - accumulated
-        const t =
-          segmentLengths[i] > 1e-9 ? segDist / segmentLengths[i] : 0
+        const t = segmentLengths[i] > 1e-9 ? segDist / segmentLengths[i] : 0
         sampled.push({
           x: points[i].x + t * (points[i + 1].x - points[i].x),
           y: points[i].y + t * (points[i + 1].y - points[i].y),
@@ -642,7 +644,7 @@ export class AngledTraceSolver extends BaseSolver {
   outputTraces: OutputTrace[] = []
   private traces: AngledTraceWithControlPoints[] = []
   private optimizationStep = 0
-  private readonly maxOptimizationSteps = 100 // Match original for quality
+  private readonly maxOptimizationSteps = 300 // Match original for quality
 
   // Sampled points for cost computation
   private sampledPoints: Float64Array[] = []
@@ -683,7 +685,9 @@ export class AngledTraceSolver extends BaseSolver {
    * Get the current solution weights as Array<[number, number, number]>
    */
   getSolutionWeights(): Array<[number, number, number]> {
-    return this.traces.map((t) => [...t.controlParams] as [number, number, number])
+    return this.traces.map(
+      (t) => [...t.controlParams] as [number, number, number],
+    )
   }
 
   /**
@@ -1012,7 +1016,11 @@ export class AngledTraceSolver extends BaseSolver {
     for (let j = 0; j < this.traces.length; j++) {
       if (j === traceIdx) continue
       const other = this.traces[j]
-      if (trace.networkId && other.networkId && trace.networkId === other.networkId)
+      if (
+        trace.networkId &&
+        other.networkId &&
+        trace.networkId === other.networkId
+      )
         continue
 
       const bj = this.traceBounds[j]
@@ -1051,7 +1059,11 @@ export class AngledTraceSolver extends BaseSolver {
 
     // Cost against obstacles using actual segments
     for (let obsIdx = 0; obsIdx < this.numObstacleSegments; obsIdx++) {
-      if (trace.networkId && this.obstacleNetworkIds[obsIdx] && trace.networkId === this.obstacleNetworkIds[obsIdx])
+      if (
+        trace.networkId &&
+        this.obstacleNetworkIds[obsIdx] &&
+        trace.networkId === this.obstacleNetworkIds[obsIdx]
+      )
         continue
 
       const obsBase = obsIdx * 4
@@ -1061,7 +1073,16 @@ export class AngledTraceSolver extends BaseSolver {
       const oy2 = this.obstacleSegments[obsBase + 3]
 
       for (let a = 0; a < pts.length - 1; a++) {
-        const distSq = segmentDistSq(pts[a].x, pts[a].y, pts[a + 1].x, pts[a + 1].y, ox1, oy1, ox2, oy2)
+        const distSq = segmentDistSq(
+          pts[a].x,
+          pts[a].y,
+          pts[a + 1].x,
+          pts[a + 1].y,
+          ox1,
+          oy1,
+          ox2,
+          oy2,
+        )
         if (distSq === 0) {
           cost += INTERSECTION_PENALTY
         } else if (distSq < obstacleSpacingSq) {
@@ -1366,8 +1387,16 @@ export class AngledTraceSolver extends BaseSolver {
       const innerTrace = this.traces[innerIdx]
 
       // Save original state
-      const origOuter = [...outerTrace.controlParams] as [number, number, number]
-      const origInner = [...innerTrace.controlParams] as [number, number, number]
+      const origOuter = [...outerTrace.controlParams] as [
+        number,
+        number,
+        number,
+      ]
+      const origInner = [...innerTrace.controlParams] as [
+        number,
+        number,
+        number,
+      ]
       const costBefore = this.computeTotalCost()
 
       const separation = preferredTraceToTraceSpacing * 2
@@ -1531,7 +1560,12 @@ export class AngledTraceSolver extends BaseSolver {
       for (const delta of deltas) {
         const newD1 = origParams[0] + delta
         const newD2 = origParams[1] + delta
-        if (newD1 >= minDist && newD1 <= maxDist && newD2 >= minDist && newD2 <= maxDist) {
+        if (
+          newD1 >= minDist &&
+          newD1 <= maxDist &&
+          newD2 >= minDist &&
+          newD2 <= maxDist
+        ) {
           trace.controlParams[0] = newD1
           trace.controlParams[1] = newD2
           this.updateTracePoints(i)
