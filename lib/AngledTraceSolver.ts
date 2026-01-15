@@ -1123,107 +1123,6 @@ export class AngledTraceSolver extends BaseSolver {
     return cost
   }
 
-  private computeCostForTrace(traceIdx: number): number {
-    const { preferredObstacleToTraceSpacing } = this.problem
-    const effectiveSpacing = this.effectiveTraceToTraceSpacing
-    const traceSpacingSq = effectiveSpacing ** 2
-    const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
-    const trace = this.traces[traceIdx]
-    const pi = this.sampledPoints[traceIdx]
-    const bi = this.traceBounds[traceIdx]
-    let cost = 0
-
-    // Cost against other traces
-    for (let j = 0; j < this.traces.length; j++) {
-      if (j === traceIdx) continue
-      const other = this.traces[j]
-      if (
-        trace.networkId &&
-        other.networkId &&
-        trace.networkId === other.networkId
-      )
-        continue
-
-      const bj = this.traceBounds[j]
-      if (
-        bi.maxX + effectiveSpacing < bj.minX ||
-        bj.maxX + effectiveSpacing < bi.minX ||
-        bi.maxY + effectiveSpacing < bj.minY ||
-        bj.maxY + effectiveSpacing < bi.minY
-      )
-        continue
-
-      const pj = this.sampledPoints[j]
-      for (let a = 0; a < OPT_SAMPLES; a++) {
-        const a1x = pi[a * 2]
-        const a1y = pi[a * 2 + 1]
-        const a2x = pi[(a + 1) * 2]
-        const a2y = pi[(a + 1) * 2 + 1]
-
-        for (let b = 0; b < OPT_SAMPLES; b++) {
-          const b1x = pj[b * 2]
-          const b1y = pj[b * 2 + 1]
-          const b2x = pj[(b + 1) * 2]
-          const b2y = pj[(b + 1) * 2 + 1]
-
-          const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
-          if (distSq < traceSpacingSq) {
-            const dist = Math.sqrt(distSq)
-            cost += (effectiveSpacing - dist) ** 2
-            if (distSq < 1e-18) cost += 20 * traceSpacingSq
-          }
-        }
-      }
-    }
-
-    // Cost against obstacles
-    for (let obsIdx = 0; obsIdx < this.numObstacleSegments; obsIdx++) {
-      if (
-        trace.networkId &&
-        this.obstacleNetworkIds[obsIdx] &&
-        trace.networkId === this.obstacleNetworkIds[obsIdx]
-      )
-        continue
-
-      const obsBase = obsIdx * 4
-      const ox1 = this.obstacleSegments[obsBase]
-      const oy1 = this.obstacleSegments[obsBase + 1]
-      const ox2 = this.obstacleSegments[obsBase + 2]
-      const oy2 = this.obstacleSegments[obsBase + 3]
-
-      const obsMinX = Math.min(ox1, ox2),
-        obsMaxX = Math.max(ox1, ox2)
-      const obsMinY = Math.min(oy1, oy2),
-        obsMaxY = Math.max(oy1, oy2)
-      if (
-        bi.maxX + preferredObstacleToTraceSpacing < obsMinX ||
-        obsMaxX + preferredObstacleToTraceSpacing < bi.minX ||
-        bi.maxY + preferredObstacleToTraceSpacing < obsMinY ||
-        obsMaxY + preferredObstacleToTraceSpacing < bi.minY
-      )
-        continue
-
-      for (let a = 0; a < OPT_SAMPLES; a++) {
-        const a1x = pi[a * 2],
-          a1y = pi[a * 2 + 1]
-        const a2x = pi[(a + 1) * 2],
-          a2y = pi[(a + 1) * 2 + 1]
-
-        const distSq = segmentDistSq(a1x, a1y, a2x, a2y, ox1, oy1, ox2, oy2)
-        if (distSq < obstacleSpacingSq) {
-          const dist = Math.sqrt(distSq)
-          cost += (preferredObstacleToTraceSpacing - dist) ** 2
-          if (distSq < 1e-18) cost += 20 * obstacleSpacingSq
-        }
-      }
-    }
-
-    // Add shape penalty for this trace
-    cost += this.computeShapePenalty(traceIdx)
-
-    return cost
-  }
-
   /**
    * Compute penalty for undesirable trace shapes:
    * - Sharp turns (90 degrees or more)
@@ -1577,77 +1476,68 @@ export class AngledTraceSolver extends BaseSolver {
     const progress = this.optimizationStep / this.maxOptimizationSteps
     const step = 3.0 * (1 - progress) + 0.5
 
-    // Allow d1/d2 to go to 0 for direct routing
     const minDist = 0
     const maxDist = minDim * 1.5
 
-    // Process only traces with non-zero cost
+    // Fewer deltas for speed
+    const deltas = [step, -step, step * 2, -step * 2]
+
     for (let i = 0; i < this.traces.length; i++) {
-      const currentCost = this.computeCostForTrace(i)
+      const currentCost = this.computeCostForTraceFast(i)
       if (currentCost === 0) continue
 
       const trace = this.traces[i]
-      const origParams: [number, number, number] = [
-        trace.controlParams[0],
-        trace.controlParams[1],
-        trace.controlParams[2],
-      ]
+      const origD1 = trace.controlParams[0]
+      const origD2 = trace.controlParams[1]
+      const origBend = trace.controlParams[2]
       let bestCost = currentCost
-      let bestD1 = origParams[0]
-      let bestD2 = origParams[1]
-      let bestBend = origParams[2]
-
-      const largeStep = step * 2
-      const deltas = [step, -step, largeStep, -largeStep, step * 3, -step * 3]
+      let bestD1 = origD1
+      let bestD2 = origD2
+      let bestBend = origBend
 
       // Try d1 adjustments
       for (const delta of deltas) {
-        const newD1 = origParams[0] + delta
+        const newD1 = origD1 + delta
         if (newD1 >= minDist && newD1 <= maxDist) {
           trace.controlParams[0] = newD1
           this.updateTracePoints(i)
-          this.updateSingleTraceSample(i)
-          const cost = this.computeCostForTrace(i)
+          this.traceBounds[i] = computeTraceBounds(trace.points)
+          const cost = this.computeCostForTraceFast(i)
           if (cost < bestCost) {
             bestCost = cost
             bestD1 = newD1
           }
         }
       }
-      trace.controlParams[0] = origParams[0]
+      trace.controlParams[0] = origD1
 
       // Try d2 adjustments
       for (const delta of deltas) {
-        const newD2 = origParams[1] + delta
+        const newD2 = origD2 + delta
         if (newD2 >= minDist && newD2 <= maxDist) {
           trace.controlParams[1] = newD2
           this.updateTracePoints(i)
-          this.updateSingleTraceSample(i)
-          const cost = this.computeCostForTrace(i)
+          this.traceBounds[i] = computeTraceBounds(trace.points)
+          const cost = this.computeCostForTraceFast(i)
           if (cost < bestCost) {
             bestCost = cost
             bestD2 = newD2
-            bestD1 = origParams[0]
+            bestD1 = origD1
           }
         }
       }
-      trace.controlParams[1] = origParams[1]
+      trace.controlParams[1] = origD2
 
-      // Try both d1 and d2 together
-      for (const delta of deltas) {
-        const newD1 = origParams[0] + delta
-        const newD2 = origParams[1] + delta
-        if (
-          newD1 >= minDist &&
-          newD1 <= maxDist &&
-          newD2 >= minDist &&
-          newD2 <= maxDist
-        ) {
+      // Try both d1 and d2 together (just 2 directions)
+      for (const delta of [step, -step]) {
+        const newD1 = origD1 + delta
+        const newD2 = origD2 + delta
+        if (newD1 >= minDist && newD1 <= maxDist && newD2 >= minDist && newD2 <= maxDist) {
           trace.controlParams[0] = newD1
           trace.controlParams[1] = newD2
           this.updateTracePoints(i)
-          this.updateSingleTraceSample(i)
-          const cost = this.computeCostForTrace(i)
+          this.traceBounds[i] = computeTraceBounds(trace.points)
+          const cost = this.computeCostForTraceFast(i)
           if (cost < bestCost) {
             bestCost = cost
             bestD1 = newD1
@@ -1655,20 +1545,20 @@ export class AngledTraceSolver extends BaseSolver {
           }
         }
       }
-      trace.controlParams[0] = origParams[0]
-      trace.controlParams[1] = origParams[1]
+      trace.controlParams[0] = origD1
+      trace.controlParams[1] = origD2
 
-      // Try bendSign with multiple deltas
-      for (const bendDelta of [0.2, -0.2, 0.5, -0.5, 1, -1]) {
-        trace.controlParams[2] = origParams[2] + bendDelta
+      // Try bendSign (fewer options)
+      for (const bendDelta of [0.5, -0.5, 1, -1]) {
+        trace.controlParams[2] = origBend + bendDelta
         this.updateTracePoints(i)
-        this.updateSingleTraceSample(i)
-        const cost = this.computeCostForTrace(i)
+        this.traceBounds[i] = computeTraceBounds(trace.points)
+        const cost = this.computeCostForTraceFast(i)
         if (cost < bestCost) {
           bestCost = cost
           bestBend = trace.controlParams[2]
-          bestD1 = origParams[0]
-          bestD2 = origParams[1]
+          bestD1 = origD1
+          bestD2 = origD2
         }
       }
 
@@ -1681,7 +1571,7 @@ export class AngledTraceSolver extends BaseSolver {
     }
 
     // Update collision pairs less frequently
-    if (this.optimizationStep % 5 === 0) {
+    if (this.optimizationStep % 8 === 0) {
       this.updateCollisionPairs()
     }
   }
