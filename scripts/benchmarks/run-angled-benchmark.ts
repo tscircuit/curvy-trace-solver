@@ -1,6 +1,8 @@
 import { AngledTraceSolver } from "../../lib/AngledTraceSolver"
 import { generateRandomProblem } from "../../lib/problem-generator"
 import { scoreOutputCost } from "../../lib/scoreOutputCost"
+import { segmentToSegmentMinDistance } from "@tscircuit/math-utils"
+import type { OutputTrace } from "../../lib/types"
 
 const NUM_PROBLEMS = 100
 const MIN_WAYPOINT_PAIRS = 2
@@ -22,6 +24,55 @@ interface ProblemResult {
   numWaypointPairs: number
   solveTimeMs: number
   score: number
+  intersectionCount: number
+}
+
+function countIntersections(outputTraces: OutputTrace[]): number {
+  let intersectionCount = 0
+
+  // Collect all trace segments using true points (consecutive point pairs)
+  const allTraceSegments: {
+    segment: [{ x: number; y: number }, { x: number; y: number }]
+    networkId?: string
+  }[] = []
+  for (const trace of outputTraces) {
+    for (let i = 0; i < trace.points.length - 1; i++) {
+      allTraceSegments.push({
+        segment: [trace.points[i], trace.points[i + 1]],
+        networkId: trace.networkId,
+      })
+    }
+  }
+
+  // Count trace-to-trace intersections (different networks only)
+  for (let i = 0; i < allTraceSegments.length; i++) {
+    const seg1 = allTraceSegments[i]
+
+    for (let j = i + 1; j < allTraceSegments.length; j++) {
+      const seg2 = allTraceSegments[j]
+
+      // Skip if same network
+      if (
+        seg1.networkId &&
+        seg2.networkId &&
+        seg1.networkId === seg2.networkId
+      ) {
+        continue
+      }
+
+      const dist = segmentToSegmentMinDistance(
+        seg1.segment[0],
+        seg1.segment[1],
+        seg2.segment[0],
+        seg2.segment[1],
+      )
+      if (dist < 1e-9) {
+        intersectionCount++
+      }
+    }
+  }
+
+  return intersectionCount
 }
 
 function runBenchmark() {
@@ -62,11 +113,14 @@ function runBenchmark() {
       outputTraces: solver.outputTraces,
     })
 
+    const intersectionCount = countIntersections(solver.outputTraces)
+
     results.push({
       problemIndex: i,
       numWaypointPairs,
       solveTimeMs,
       score,
+      intersectionCount,
     })
 
     // Progress indicator for each problem
@@ -136,7 +190,7 @@ function runBenchmark() {
   console.log("\n" + "-".repeat(60))
   console.log("BREAKDOWN BY PROBLEM SIZE")
   console.log("-".repeat(60))
-  console.log("Pairs  Count  Avg Time(ms)  Avg Score")
+  console.log("Pairs  Count  Avg Time(ms)  Avg Score  Avg Intersections")
   console.log("-".repeat(60))
 
   const sortedSizes = [...sizeGroups.keys()].sort((a, b) => a - b)
@@ -145,11 +199,33 @@ function runBenchmark() {
     const groupAvgTime =
       group.reduce((a, r) => a + r.solveTimeMs, 0) / group.length
     const groupAvgScore = group.reduce((a, r) => a + r.score, 0) / group.length
+    const groupAvgIntersections =
+      group.reduce((a, r) => a + r.intersectionCount, 0) / group.length
     console.log(
-      `${String(size).padStart(5)}  ${String(group.length).padStart(5)}  ${groupAvgTime.toFixed(2).padStart(12)}  ${groupAvgScore.toFixed(2).padStart(9)}`,
+      `${String(size).padStart(5)}  ${String(group.length).padStart(5)}  ${groupAvgTime.toFixed(2).padStart(12)}  ${groupAvgScore.toFixed(2).padStart(9)}  ${groupAvgIntersections.toFixed(2).padStart(17)}`,
     )
   }
 
+  console.log("=".repeat(60))
+
+  // Calculate intersection statistics
+  const problemsWithIntersections = results.filter(
+    (r) => r.intersectionCount > 0,
+  ).length
+  const percentWithIntersections =
+    (problemsWithIntersections / results.length) * 100
+  const totalIntersections = results.reduce(
+    (a, r) => a + r.intersectionCount,
+    0,
+  )
+
+  console.log("\n" + "-".repeat(60))
+  console.log("INTERSECTION STATISTICS")
+  console.log("-".repeat(60))
+  console.log(
+    `Problems with intersections: ${problemsWithIntersections}/${results.length} (${percentWithIntersections.toFixed(1)}%)`,
+  )
+  console.log(`Total intersections:         ${totalIntersections}`)
   console.log("=".repeat(60))
 
   // Print summary line suitable for comparison
@@ -157,7 +233,8 @@ function runBenchmark() {
     "\n[SUMMARY] AngledTraceSolver: " +
       `avg_time=${avgTimeMs.toFixed(2)}ms, ` +
       `avg_score=${averageScore.toFixed(2)}, ` +
-      `p95_score=${p95WorstScore.toFixed(2)}`,
+      `p95_score=${p95WorstScore.toFixed(2)}, ` +
+      `intersections=${percentWithIntersections.toFixed(1)}%`,
   )
 }
 
