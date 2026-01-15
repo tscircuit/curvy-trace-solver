@@ -642,7 +642,7 @@ export class AngledTraceSolver extends BaseSolver {
   outputTraces: OutputTrace[] = []
   private traces: AngledTraceWithControlPoints[] = []
   private optimizationStep = 0
-  private readonly maxOptimizationSteps = 70 // Balanced between speed and quality
+  private readonly maxOptimizationSteps = 100 // Match original for quality
 
   // Sampled points for cost computation
   private sampledPoints: Float64Array[] = []
@@ -802,7 +802,7 @@ export class AngledTraceSolver extends BaseSolver {
       const minDist = Math.min(W, H) * 0.03
       const d1 = Math.max(minDist, initialDist)
       const d2 = Math.max(minDist, initialDist)
-      const bendSign = 0 // Start neutral
+      const bendSign = 0
 
       // Compute initial points
       const points = computeAngledTracePoints(
@@ -994,6 +994,86 @@ export class AngledTraceSolver extends BaseSolver {
     return cost
   }
 
+  // Fast cost using actual trace segments (not samples)
+  private computeCostForTraceFast(traceIdx: number): number {
+    const { preferredObstacleToTraceSpacing } = this.problem
+    const effectiveSpacing = this.effectiveTraceToTraceSpacing
+    const traceSpacingSq = effectiveSpacing ** 2
+    const obstacleSpacingSq = preferredObstacleToTraceSpacing ** 2
+    const trace = this.traces[traceIdx]
+    const pts = trace.points
+    const bi = this.traceBounds[traceIdx]
+    let cost = 0
+
+    // Very high penalty for actual intersections
+    const INTERSECTION_PENALTY = 10000
+
+    // Cost against other traces using actual segments
+    for (let j = 0; j < this.traces.length; j++) {
+      if (j === traceIdx) continue
+      const other = this.traces[j]
+      if (trace.networkId && other.networkId && trace.networkId === other.networkId)
+        continue
+
+      const bj = this.traceBounds[j]
+      if (
+        bi.maxX + effectiveSpacing < bj.minX ||
+        bj.maxX + effectiveSpacing < bi.minX ||
+        bi.maxY + effectiveSpacing < bj.minY ||
+        bj.maxY + effectiveSpacing < bi.minY
+      )
+        continue
+
+      const otherPts = other.points
+      for (let a = 0; a < pts.length - 1; a++) {
+        const a1x = pts[a].x
+        const a1y = pts[a].y
+        const a2x = pts[a + 1].x
+        const a2y = pts[a + 1].y
+
+        for (let b = 0; b < otherPts.length - 1; b++) {
+          const b1x = otherPts[b].x
+          const b1y = otherPts[b].y
+          const b2x = otherPts[b + 1].x
+          const b2y = otherPts[b + 1].y
+
+          const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
+          if (distSq === 0) {
+            // Actual intersection - very high penalty
+            cost += INTERSECTION_PENALTY
+          } else if (distSq < traceSpacingSq) {
+            const dist = Math.sqrt(distSq)
+            cost += (effectiveSpacing - dist) ** 2
+          }
+        }
+      }
+    }
+
+    // Cost against obstacles using actual segments
+    for (let obsIdx = 0; obsIdx < this.numObstacleSegments; obsIdx++) {
+      if (trace.networkId && this.obstacleNetworkIds[obsIdx] && trace.networkId === this.obstacleNetworkIds[obsIdx])
+        continue
+
+      const obsBase = obsIdx * 4
+      const ox1 = this.obstacleSegments[obsBase]
+      const oy1 = this.obstacleSegments[obsBase + 1]
+      const ox2 = this.obstacleSegments[obsBase + 2]
+      const oy2 = this.obstacleSegments[obsBase + 3]
+
+      for (let a = 0; a < pts.length - 1; a++) {
+        const distSq = segmentDistSq(pts[a].x, pts[a].y, pts[a + 1].x, pts[a + 1].y, ox1, oy1, ox2, oy2)
+        if (distSq === 0) {
+          cost += INTERSECTION_PENALTY
+        } else if (distSq < obstacleSpacingSq) {
+          const dist = Math.sqrt(distSq)
+          cost += (preferredObstacleToTraceSpacing - dist) ** 2
+        }
+      }
+    }
+
+    return cost
+  }
+
   private computeCostForTrace(traceIdx: number): number {
     const { preferredObstacleToTraceSpacing } = this.problem
     const effectiveSpacing = this.effectiveTraceToTraceSpacing
@@ -1026,16 +1106,16 @@ export class AngledTraceSolver extends BaseSolver {
 
       const pj = this.sampledPoints[j]
       for (let a = 0; a < OPT_SAMPLES; a++) {
-        const a1x = pi[a * 2],
-          a1y = pi[a * 2 + 1]
-        const a2x = pi[(a + 1) * 2],
-          a2y = pi[(a + 1) * 2 + 1]
+        const a1x = pi[a * 2]
+        const a1y = pi[a * 2 + 1]
+        const a2x = pi[(a + 1) * 2]
+        const a2y = pi[(a + 1) * 2 + 1]
 
         for (let b = 0; b < OPT_SAMPLES; b++) {
-          const b1x = pj[b * 2],
-            b1y = pj[b * 2 + 1]
-          const b2x = pj[(b + 1) * 2],
-            b2y = pj[(b + 1) * 2 + 1]
+          const b1x = pj[b * 2]
+          const b1y = pj[b * 2 + 1]
+          const b2x = pj[(b + 1) * 2]
+          const b2y = pj[(b + 1) * 2 + 1]
 
           const distSq = segmentDistSq(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y)
           if (distSq < traceSpacingSq) {
@@ -1412,9 +1492,10 @@ export class AngledTraceSolver extends BaseSolver {
       let bestBend = origParams[2]
 
       const largeStep = step * 2
+      const deltas = [step, -step, largeStep, -largeStep, step * 3, -step * 3]
 
-      // Try d1 +/- step and +/- 2*step
-      for (const delta of [step, -step, largeStep, -largeStep]) {
+      // Try d1 adjustments
+      for (const delta of deltas) {
         const newD1 = origParams[0] + delta
         if (newD1 >= minDist && newD1 <= maxDist) {
           trace.controlParams[0] = newD1
@@ -1429,8 +1510,8 @@ export class AngledTraceSolver extends BaseSolver {
       }
       trace.controlParams[0] = origParams[0]
 
-      // Try d2 +/- step and +/- 2*step
-      for (const delta of [step, -step, largeStep, -largeStep]) {
+      // Try d2 adjustments
+      for (const delta of deltas) {
         const newD2 = origParams[1] + delta
         if (newD2 >= minDist && newD2 <= maxDist) {
           trace.controlParams[1] = newD2
@@ -1440,14 +1521,14 @@ export class AngledTraceSolver extends BaseSolver {
           if (cost < bestCost) {
             bestCost = cost
             bestD2 = newD2
-            bestD1 = origParams[0] // Reset d1 if d2 is better
+            bestD1 = origParams[0]
           }
         }
       }
       trace.controlParams[1] = origParams[1]
 
-      // Try both together +/- step
-      for (const delta of [step, -step, largeStep, -largeStep]) {
+      // Try both d1 and d2 together
+      for (const delta of deltas) {
         const newD1 = origParams[0] + delta
         const newD2 = origParams[1] + delta
         if (newD1 >= minDist && newD1 <= maxDist && newD2 >= minDist && newD2 <= maxDist) {
@@ -1467,7 +1548,7 @@ export class AngledTraceSolver extends BaseSolver {
       trace.controlParams[1] = origParams[1]
 
       // Try bendSign with multiple deltas
-      for (const bendDelta of [0.3, -0.3, 0.6, -0.6]) {
+      for (const bendDelta of [0.2, -0.2, 0.5, -0.5, 1, -1]) {
         trace.controlParams[2] = origParams[2] + bendDelta
         this.updateTracePoints(i)
         this.updateSingleTraceSample(i)
@@ -1517,15 +1598,15 @@ export class AngledTraceSolver extends BaseSolver {
       const progress = this.optimizationStep / this.maxOptimizationSteps
       const startMultiplier = 3.0
       const endMultiplier = 1.0
-      const currentMultiplier =
-        startMultiplier + (endMultiplier - startMultiplier) * progress
       this.effectiveTraceToTraceSpacing =
-        this.problem.preferredTraceToTraceSpacing * currentMultiplier
+        this.problem.preferredTraceToTraceSpacing *
+        (startMultiplier + (endMultiplier - startMultiplier) * progress)
 
       this.optimizeStep()
       this.optimizationStep++
 
-      if (this.optimizationStep % 10 === 0) {
+      // Resolve intersections every 5 steps
+      if (this.optimizationStep % 5 === 0) {
         const resolved = this.resolveIntersections()
         if (resolved > 0) {
           this.updateCollisionPairs()
@@ -1533,18 +1614,15 @@ export class AngledTraceSolver extends BaseSolver {
       }
 
       const currentCost = this.computeTotalCost()
-      if (currentCost === 0) {
-        this.optimizationStep = this.maxOptimizationSteps
-      } else if (currentCost >= this.lastCost * 0.99) {
+      if (currentCost >= this.lastCost * 0.995) {
         this.stagnantSteps++
-        if (this.stagnantSteps > 6) {
-          const resolved = this.resolveIntersections()
-          if (resolved > 0) {
-            this.updateCollisionPairs()
-            this.stagnantSteps = 0
-          } else if (this.stagnantSteps > 10) {
-            this.optimizationStep = this.maxOptimizationSteps
-          }
+        if (this.stagnantSteps > 8) {
+          // Try to resolve any remaining intersections before giving up
+          this.resolveIntersections()
+          this.stagnantSteps = 0
+        }
+        if (this.stagnantSteps > 12) {
+          this.optimizationStep = this.maxOptimizationSteps
         }
       } else {
         this.stagnantSteps = 0
@@ -1553,7 +1631,15 @@ export class AngledTraceSolver extends BaseSolver {
     }
 
     if (this.optimizationStep >= this.maxOptimizationSteps) {
-      this.resolveIntersections()
+      // Final pass: update samples and resolve any remaining intersections
+      this.updateAllSampledTraces()
+      this.updateCollisionPairs()
+      for (let i = 0; i < 5; i++) {
+        const resolved = this.resolveIntersections()
+        if (resolved === 0) break
+        this.updateAllSampledTraces()
+        this.updateCollisionPairs()
+      }
       this.buildOutputTraces()
       this.solved = true
     }
