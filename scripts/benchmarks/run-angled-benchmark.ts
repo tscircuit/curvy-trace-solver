@@ -22,7 +22,6 @@ interface ProblemResult {
   numWaypointPairs: number
   solveTimeMs: number
   score: number
-  iterations: number
 }
 
 function runBenchmark() {
@@ -53,16 +52,7 @@ function runBenchmark() {
     const solver = new AngledTraceSolver(problem)
     const problemStart = performance.now()
 
-    // Run solver until complete (with max iterations to prevent infinite loops)
-    const MAX_ITERATIONS = 100
-    let iterations = 0
-    for (
-      iterations = 0;
-      iterations < MAX_ITERATIONS && !solver.solved;
-      iterations++
-    ) {
-      solver.step()
-    }
+    solver.solve()
 
     const problemEnd = performance.now()
     const solveTimeMs = problemEnd - problemStart
@@ -77,7 +67,6 @@ function runBenchmark() {
       numWaypointPairs,
       solveTimeMs,
       score,
-      iterations,
     })
 
     // Progress indicator for each problem
@@ -109,11 +98,6 @@ function runBenchmark() {
   const maxTimeMs = sortedTimes[sortedTimes.length - 1]
   const medianTimeMs = sortedTimes[Math.floor(times.length / 2)]
 
-  // Calculate iteration statistics
-  const iterations = results.map((r) => r.iterations)
-  const avgIterations =
-    iterations.reduce((a, b) => a + b, 0) / iterations.length
-
   // Calculate stats by problem size
   const sizeGroups = new Map<number, ProblemResult[]>()
   for (const result of results) {
@@ -129,7 +113,6 @@ function runBenchmark() {
   console.log("=".repeat(60))
   console.log(`Total problems:        ${NUM_PROBLEMS}`)
   console.log(`Total time:            ${(totalTimeMs / 1000).toFixed(2)}s`)
-  console.log(`Avg iterations:        ${avgIterations.toFixed(1)}`)
 
   console.log("\n" + "-".repeat(60))
   console.log("TIMING STATISTICS (ms)")
