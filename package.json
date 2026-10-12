@@ -1,5 +1,6 @@
 {
   "name": "@tscircuit/curvy-trace-solver",
+  "license": "MIT",
   "main": "dist/index.js",
   "version": "0.0.12",
   "repository": {
