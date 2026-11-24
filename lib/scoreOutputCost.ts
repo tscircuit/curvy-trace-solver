@@ -24,7 +24,11 @@ export const scoreOutputCost = ({
   outputTraces: OutputTrace[]
   samplesPerTrace?: number
 }): number => {
-  const { preferredTraceToTraceSpacing: preferredSpacing, obstacles } = problem
+  const {
+    preferredTraceToTraceSpacing: preferredTraceSpacing,
+    preferredObstacleToTraceSpacing: preferredObstacleSpacing,
+    obstacles,
+  } = problem
 
   // Collect all trace segments
   const allTraceSegments: { segment: [Point, Point]; networkId?: string }[] = []
@@ -76,12 +80,12 @@ export const scoreOutputCost = ({
         seg2.segment[0],
         seg2.segment[1],
       )
-      if (dist < preferredSpacing) {
-        totalCost += (preferredSpacing - dist) ** 2
+      if (dist < preferredTraceSpacing) {
+        totalCost += (preferredTraceSpacing - dist) ** 2
       }
       // Add cross-net intersection penalty
       if (dist < 1e-9) {
-        totalCost += samplesPerTrace * preferredSpacing ** 2
+        totalCost += samplesPerTrace * preferredTraceSpacing ** 2
       }
     }
 
@@ -102,12 +106,12 @@ export const scoreOutputCost = ({
         obsSeg.segment[0],
         obsSeg.segment[1],
       )
-      if (dist < preferredSpacing) {
-        totalCost += (preferredSpacing - dist) ** 2
+      if (dist < preferredObstacleSpacing) {
+        totalCost += (preferredObstacleSpacing - dist) ** 2
       }
       // Add cross-net intersection penalty
       if (dist < 1e-9) {
-        totalCost += samplesPerTrace * preferredSpacing ** 2
+        totalCost += samplesPerTrace * preferredObstacleSpacing ** 2
       }
     }
   }
